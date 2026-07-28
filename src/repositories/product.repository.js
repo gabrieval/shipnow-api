@@ -36,6 +36,15 @@ class ProductRepository {
   }
 
   /**
+   * Genera un ObjectId nuevo sin tocar la base. Lo usa el modulo de mocking para
+   * armar relaciones en los datos de vista previa, sin que el Service tenga que
+   * importar Mongoose.
+   */
+  newId() {
+    return new mongoose.Types.ObjectId();
+  }
+
+  /**
    * Listado paginado con filtros ya normalizados por el Service.
    * @returns {Promise<{docs: object[], total: number, page: number, limit: number, totalPages: number}>}
    */
@@ -88,6 +97,25 @@ class ProductRepository {
   async create(data) {
     const created = await this.model.create(data);
     return this.getById(created._id);
+  }
+
+  /**
+   * Insercion masiva para la carga de datos de prueba.
+   * `ordered: false` deja que el lote siga aunque un documento choque contra un
+   * indice unico, en vez de abortar toda la carga por uno solo.
+   */
+  async createMany(documents = []) {
+    if (documents.length === 0) return [];
+    // Sin `lean`: se necesita que Mongoose aplique defaults (isActive, status) y
+    // valide los enums de cada documento antes de escribirlo.
+    const inserted = await this.model.insertMany(documents, { ordered: false });
+    return inserted.map((doc) => doc.toObject());
+  }
+
+  /** Borra fisicamente solo los productos marcados como simulados. */
+  async deleteMocks() {
+    const { deletedCount } = await this.model.deleteMany({ isMock: true });
+    return deletedCount;
   }
 
   /** Actualiza campos puntuales y devuelve el documento resultante. */

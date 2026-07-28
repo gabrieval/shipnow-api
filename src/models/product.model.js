@@ -55,6 +55,12 @@ const productSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    // Marca de dato generado por el modulo de mocking (ver mock.service.js).
+    isMock: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     // Baja logica: los productos no se borran fisicamente del catalogo.
     isActive: {
       type: Boolean,
