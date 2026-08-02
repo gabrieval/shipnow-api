@@ -1,14 +1,16 @@
-# ShipNow API — Estructura profesional por capas + módulo de mocking
+# ShipNow API — Arquitectura por capas, mocking y manejo centralizado de errores
 
-Pre-entregas **Módulo 1** y **Módulo 2** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1**, **Módulo 2** y **Módulo 3** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 API de ShipNow refactorizada desde un modelo monolítico a una arquitectura por capas
 **Controller → Service → Repository**, con configuración de entorno validada al arranque,
-un diccionario centralizado de constantes del dominio y un módulo de mocking que genera
-usuarios, repartidores, pedidos y entregas de prueba respetando esas mismas capas.
+un diccionario centralizado de constantes del dominio, un módulo de mocking que genera
+usuarios, repartidores, pedidos y entregas de prueba, y una capa común de errores que hace
+que toda la API falle siempre de la misma forma.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
+- **Módulo 3** — capa centralizada de manejo de errores: errores personalizados, diccionario y middleware global.
 
 ---
 
@@ -98,10 +100,17 @@ src/
 │   └── index.js           # barrel de la capa de configuración
 ├── constants/
 │   └── index.js           # USER_ROLES, ORDER_STATUS, DELIVERY_STATUS... (Object.freeze)
+├── errors/                # capa centralizada de errores (Módulo 3)
+│   ├── error.dictionary.js  # código -> { status HTTP, mensaje }
+│   ├── AppError.js          # clase base: toma status y mensaje del diccionario
+│   ├── domain.errors.js     # errores personalizados del dominio
+│   ├── error.normalizer.js  # traduce errores de Mongoose a AppError
+│   └── index.js
 ├── controllers/
 │   ├── product.controller.js
 │   ├── user.controller.js
-│   └── mock.controller.js
+│   ├── mock.controller.js
+│   └── health.controller.js
 ├── services/
 │   ├── product.service.js
 │   ├── user.service.js
@@ -131,8 +140,7 @@ src/
 │   ├── requester.middleware.js  # deja quién ejecuta la request en req.requester
 │   └── error.middleware.js      # manejo centralizado de errores
 ├── utils/
-│   ├── AppError.js        # error de dominio con status HTTP
-│   ├── apiResponse.js     # formato único de respuesta
+│   ├── apiResponse.js     # formato único de respuesta (éxito y error)
 │   └── constants.js       # alias que reexporta src/constants
 ├── scripts/
 │   └── seed.js
@@ -145,7 +153,7 @@ src/
 ```
 Router  →  Controller  →  Service  →  Repository  →  Model (Mongoose)
                              ↑
-                    constants / AppError / mocks
+                  constants / errors / mocks
 ```
 
 - El **Controller** no importa Mongoose ni el modelo: no sabe si abajo hay Mongo, Postgres o un archivo.
@@ -268,6 +276,185 @@ estado `delivered`.
 
 ---
 
+## Manejo centralizado de errores
+
+Ningún controller, service ni router arma una respuesta de error. El recorrido es siempre el
+mismo:
+
+```
+Service detecta el problema
+   └─> lanza un error de dominio (UserNotFoundError, InvalidMockCountError, …)
+        └─> Controller lo deriva con next(error)      ← no lo interpreta
+             └─> Middleware global normaliza y responde   ← ÚNICA salida de errores
+```
+
+La capa tiene cuatro piezas:
+
+| Pieza | Archivo | Rol |
+| --- | --- | --- |
+| **Diccionario** | `errors/error.dictionary.js` | Único lugar donde un código se asocia a un status HTTP y a un mensaje |
+| **Clase base** | `errors/AppError.js` | Toma el `code` y saca de ahí `status` y `message`. Nadie escribe un `404` a mano |
+| **Errores del dominio** | `errors/domain.errors.js` | 27 clases que representan casos concretos del negocio |
+| **Normalizador** | `errors/error.normalizer.js` | Traduce lo que no es un `AppError` (errores de Mongoose, bugs) a la misma forma |
+| **Middleware global** | `middlewares/error.middleware.js` | Loguea y emite la respuesta. Es el único que llama a `failure()` |
+
+**Por qué el service no elige el status HTTP.** Un service que hace `throw AppError.conflict(…)`
+está decidiendo algo de HTTP, que es un detalle del transporte. Con el diccionario, el service
+dice *qué* pasó (`new InsufficientStockError({ requested, available })`) y el `409` sale de una
+tabla. Si mañana esos errores viajan por gRPC o por una cola, los services no cambian.
+
+**Errores personalizados del dominio** (extracto):
+
+| Clase | Código | HTTP |
+| --- | --- | --- |
+| `ProductNotFoundError` | `PRODUCT_NOT_FOUND` | 404 |
+| `InsufficientStockError` | `INSUFFICIENT_STOCK` | 409 |
+| `ProductCodeInUseError` | `PRODUCT_CODE_IN_USE` | 409 |
+| `UserNotFoundError` | `USER_NOT_FOUND` | 404 |
+| `EmailInUseError` | `USER_EMAIL_IN_USE` | 409 |
+| `InvalidCredentialsError` | `INVALID_CREDENTIALS` | 401 |
+| `LastAdminError` | `LAST_ADMIN` | 409 |
+| `ForbiddenRoleError` | `FORBIDDEN_ROLE` | 403 |
+| `ValidationError` | `VALIDATION_ERROR` | 400 |
+| `InvalidMockCountError` | `INVALID_MOCK_COUNT` | 400 |
+| `MockMissingUsersError` | `MOCK_MISSING_USERS` | 400 |
+| `MockIncoherentDataError` | `MOCK_INCOHERENT_DATA` | 422 |
+| `MockPersistenceError` | `MOCK_PERSISTENCE_ERROR` | 500 |
+
+**Errores esperados vs. bugs.** Todo `AppError` nace con `isOperational: true`: es un caso que
+el dominio previó. Lo que entra al middleware sin ser un `AppError` se envuelve como
+`INTERNAL_ERROR` con `isOperational: false`, se loguea entero con su causa original y, en
+producción, no filtra su mensaje al cliente.
+
+**Errores de Mongoose.** Los traduce el normalizador, no los services. Un `ValidationError` de
+esquema sale como `SCHEMA_VALIDATION_ERROR` (422) con la lista de campos; un `CastError` como
+`INVALID_ID` (400); un índice único violado como `DUPLICATED_KEY` (409), incluida la variante
+que aparece dentro de un `insertMany` masivo.
+
+### Cómo probar el comportamiento ante casos inválidos
+
+Todos estos devuelven la misma estructura, cambiando solo `code`, `message` y `details`:
+
+```bash
+curl -i http://localhost:8080/api/products/no-existe-este-id
+```
+
+```bash
+curl -i -X POST http://localhost:8080/api/products -H "Content-Type: application/json" -H "x-user-role: admin" -d "{\"title\":\"Solo titulo\"}"
+```
+
+```bash
+curl -i -X POST http://localhost:8080/api/products -H "Content-Type: application/json" -H "x-user-role: user" -d "{}"
+```
+
+```bash
+curl -i "http://localhost:8080/api/products?category=naves-espaciales"
+```
+
+```bash
+curl -i -X POST http://localhost:8080/api/users -H "Content-Type: application/json" -d "{\"firstName\":\"a\",\"lastName\":\"b\",\"email\":\"no-es-un-mail\",\"password\":\"123\"}"
+```
+
+```bash
+curl -i http://localhost:8080/api/ruta-que-no-existe
+```
+
+| Caso | HTTP | `error.code` |
+| --- | --- | --- |
+| Producto inexistente o id malformado | 404 | `PRODUCT_NOT_FOUND` |
+| Campos obligatorios faltantes | 400 | `VALIDATION_ERROR` |
+| Alta de producto sin ser admin | 403 | `FORBIDDEN_ROLE` |
+| Categoría fuera del enum | 400 | `INVALID_PRODUCT_CATEGORY` |
+| Email mal formado / contraseña corta | 400 | `VALIDATION_ERROR` |
+| Email ya registrado | 409 | `USER_EMAIL_IN_USE` |
+| Login con contraseña incorrecta | 401 | `INVALID_CREDENTIALS` |
+| Descontar más stock del disponible | 409 | `INSUFFICIENT_STOCK` |
+| Degradar al último administrador | 409 | `LAST_ADMIN` |
+| Ruta inexistente | 404 | `ROUTE_NOT_FOUND` |
+
+### Casos inválidos del módulo de mocks
+
+El módulo valida **cantidad, tipo y rango** de cada parámetro, y distingue el motivo del
+rechazo en el mensaje:
+
+```bash
+curl -i "http://localhost:8080/api/mocks/users?count=-5"
+```
+
+```bash
+curl -i "http://localhost:8080/api/mocks/users?count=2.5"
+```
+
+```bash
+curl -i "http://localhost:8080/api/mocks/users?count=diez"
+```
+
+```bash
+curl -i "http://localhost:8080/api/mocks/users?count=9999"
+```
+
+Respuesta del primero:
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "INVALID_MOCK_COUNT",
+    "message": "El parametro \"count\" no es una cantidad valida: no puede ser negativo",
+    "details": { "field": "count", "received": -5, "min": 1, "max": 200 }
+  },
+  "timestamp": "2026-08-02T14:47:25.713Z",
+  "path": "GET /api/mocks/users?count=-5"
+}
+```
+
+| Valor enviado | Motivo en el mensaje |
+| --- | --- |
+| `-5` | no puede ser negativo |
+| `2.5` | tiene que ser un entero, no un decimal |
+| `diez` | no es un número |
+| `0` | tiene que ser mayor a 0 |
+| `9999` | supera el máximo permitido de 200 |
+| `[5]` / `{}` / `true` | tiene que ser un número |
+
+Y los casos de la carga en MongoDB:
+
+```bash
+curl -i -X POST http://localhost:8080/api/mocks/generateData -H "Content-Type: application/json" -H "x-user-role: admin" -d "{\"users\":-3}"
+```
+
+```bash
+curl -i -X POST http://localhost:8080/api/mocks/generateData -H "Content-Type: application/json" -H "x-user-role: admin" -d "{\"users\":2,\"orders\":0,\"deliveries\":2}"
+```
+
+| Caso | HTTP | `error.code` |
+| --- | --- | --- |
+| Cantidad inválida (negativa, decimal, no numérica, fuera de rango) | 400 | `INVALID_MOCK_COUNT` |
+| Carga sin ser admin | 403 | `FORBIDDEN_ROLE` |
+| Pedidos sin usuarios con los que relacionarlos | 400 | `MOCK_MISSING_USERS` |
+| Pedidos sin productos con los que armarlos | 400 | `MOCK_MISSING_PRODUCTS` |
+| Entregas sin pedidos | 400 | `MOCK_MISSING_ORDERS` |
+| Entregas generadas en un estado incoherente | 422 | `MOCK_INCOHERENT_DATA` |
+| Falla la escritura en MongoDB | 500 | `MOCK_PERSISTENCE_ERROR` |
+
+En el último caso el error identifica **qué entidad** falló y por qué, sin exponer el stack del
+driver:
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "MOCK_PERSISTENCE_ERROR",
+    "message": "Fallo la carga de datos de prueba al insertar \"products\"",
+    "details": { "entity": "products", "reason": "E11000 duplicate key error collection: shipnow.products" }
+  },
+  "timestamp": "2026-08-02T14:47:25.713Z",
+  "path": "POST /api/mocks/generateData"
+}
+```
+
+---
+
 ## Constantes en lugar de strings mágicos
 
 Todo el dominio usa `src/constants/index.js`, con objetos congelados con `Object.freeze`:
@@ -283,7 +470,6 @@ Todo el dominio usa `src/constants/index.js`, con objetos congelados con `Object
 | `DELIVERY_STATUS_REQUIRING_COURIER`  | estados de entrega que obligan a tener repartidor asignado                    |
 | `MOCK_LIMITS`                        | `DEFAULT_COUNT`, `MAX_COUNT`, `MAX_ITEMS_PER_ORDER`, `DEFAULT_PASSWORD`       |
 | `HTTP_STATUS`                        | `OK`, `CREATED`, `BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`…                      |
-| `ERROR_MESSAGES`                     | mensajes reutilizables del dominio                                            |
 | `PAGINATION`                         | `DEFAULT_PAGE`, `MAX_LIMIT`                                                   |
 | `SORT_ORDER`                         | `ASC`, `DESC`                                                                 |
 
@@ -294,6 +480,10 @@ puede referenciarlo con la misma colección de usuarios y el rol queda validado 
 Los `enum` de los modelos se alimentan de estos mismos objetos
 (`enum: Object.values(USER_ROLES)`), así que no hay forma de que el esquema y la lógica se
 desincronicen.
+
+Los **mensajes de error** ya no viven acá: desde el Módulo 3 están en
+`src/errors/error.dictionary.js`, junto con el status HTTP de cada uno. Tener el texto en un
+lado y el status en otro era pedir que se desincronizaran.
 
 > La consigna nombra el diccionario en dos rutas distintas (`src/utils/constants.js` y
 > `src/constants/index.js`). La implementación real está en `src/constants/index.js`;
@@ -485,11 +675,31 @@ cargado a mano, o por `npm run seed`, no se toca.
 { "status": "success", "payload": { } }
 ```
 
-Error:
+Error — misma estructura para **todos** los errores de la API:
 
 ```json
-{ "status": "error", "message": "El producto solicitado no existe" }
+{
+  "status": "error",
+  "error": {
+    "code": "PRODUCT_NOT_FOUND",
+    "message": "El producto solicitado no existe",
+    "details": { "id": "64b7f1f1f1f1f1f1f1f1f1f1" }
+  },
+  "timestamp": "2026-08-02T14:47:25.713Z",
+  "path": "GET /api/products/64b7f1f1f1f1f1f1f1f1f1f1"
+}
 ```
+
+| Campo | Siempre presente | Para qué sirve |
+| --- | --- | --- |
+| `status` | sí | `"error"` — permite distinguir del `"success"` sin mirar el código HTTP |
+| `error.code` | sí | Identificador estable del error. Es lo que debe leer un cliente, no el texto |
+| `error.message` | sí | Descripción legible, en castellano |
+| `error.details` | no | Contexto: campos inválidos, valor recibido, valores admitidos |
+| `timestamp` | sí | Momento del error en ISO-8601, para cruzar con los logs |
+| `path` | sí | Método y URL que lo provocaron |
+
+Los mensajes de éxito nunca traen `error`, y los de error nunca traen `payload`.
 
 ### Ejemplos
 
@@ -514,6 +724,20 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 3 — Manejo profesional de errores
+
+| Criterio                                                                     | Dónde se verifica                                                                     |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| No hay respuestas de error dispersas en rutas o controllers                    | `failure()` se invoca en un solo lugar de todo el proyecto: `error.middleware.js`         |
+| Los errores se detectan en la capa que corresponde (services)                  | Los tres services lanzan errores de dominio; los controllers solo hacen `next(error)`     |
+| La respuesta final sale únicamente del middleware                              | Ningún controller ni router llama a `res.status()` para un error                          |
+| Estructura clara, predecible y uniforme                                        | `{ status, error: { code, message, details? }, timestamp, path }` en todos los casos      |
+| Existen errores personalizados del dominio                                     | 27 clases en `errors/domain.errors.js`, todas heredando de `AppError`                     |
+| Diccionario de errores                                                         | `errors/error.dictionary.js`: 31 códigos, cada uno con su status HTTP y mensaje           |
+| Middleware global que transforma los errores en respuestas HTTP                | `errors/error.normalizer.js` + `middlewares/error.middleware.js`                          |
+| El módulo de mocks valida cantidad inválida y valores negativos                | `#normalizeCount` distingue negativo, decimal, cero, no numérico y fuera de rango         |
+| El módulo de mocks responde de forma controlada ante fallas de MongoDB         | `#persist()` envuelve cada escritura y lanza `MockPersistenceError` con la entidad afectada |
 
 ### Módulo 2 — Mocking y carga de datos
 

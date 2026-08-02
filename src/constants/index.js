@@ -96,26 +96,6 @@ const HTTP_STATUS = Object.freeze({
   INTERNAL_SERVER_ERROR: 500,
 });
 
-/** Mensajes de error reutilizables, para no duplicar textos entre services. */
-const ERROR_MESSAGES = Object.freeze({
-  PRODUCT_NOT_FOUND: 'El producto solicitado no existe',
-  PRODUCT_CODE_IN_USE: 'Ya existe un producto con ese codigo',
-  PRODUCT_DISCONTINUED: 'El producto esta discontinuado y no admite operaciones de stock',
-  INSUFFICIENT_STOCK: 'Stock insuficiente para completar la operacion',
-  USER_NOT_FOUND: 'El usuario solicitado no existe',
-  ORDER_NOT_FOUND: 'El pedido solicitado no existe',
-  DELIVERY_NOT_FOUND: 'La entrega solicitada no existe',
-  NO_USERS_FOR_ORDERS: 'No hay usuarios disponibles para asociar a los pedidos. Genera usuarios en la misma llamada.',
-  NO_PRODUCTS_FOR_ORDERS: 'No hay productos disponibles para armar los pedidos. Genera productos en la misma llamada.',
-  NO_ORDERS_FOR_DELIVERIES: 'No hay pedidos disponibles para asociar a las entregas. Genera pedidos en la misma llamada.',
-  INVALID_COUNT: 'La cantidad solicitada debe ser un entero entre 1 y',
-  USER_EMAIL_IN_USE: 'Ya existe un usuario registrado con ese email',
-  INVALID_CREDENTIALS: 'Email o contrasena incorrectos',
-  INVALID_ID: 'El identificador enviado no es valido',
-  FORBIDDEN_ROLE: 'No tenes permisos para realizar esta accion',
-  LAST_ADMIN: 'No se puede degradar ni eliminar al ultimo administrador',
-});
-
 /** Valores por defecto de paginacion, compartidos entre services. */
 const PAGINATION = Object.freeze({
   DEFAULT_PAGE: 1,
@@ -138,7 +118,6 @@ module.exports = {
   DELIVERY_STATUS_REQUIRING_COURIER,
   MOCK_LIMITS,
   HTTP_STATUS,
-  ERROR_MESSAGES,
   PAGINATION,
   SORT_ORDER,
 };

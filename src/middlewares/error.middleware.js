@@ -1,50 +1,44 @@
 /**
- * Manejo centralizado de errores.
+ * Middleware global de errores: la UNICA salida de errores de toda la API.
  *
- * Traduce errores de Mongoose a codigos HTTP para que ningun Controller tenga
- * que conocer el driver, y respeta el status de los AppError del dominio.
+ * Ningun controller, service o ruta arma una respuesta de error. Todos lanzan
+ * (o derivan con `next(error)`) y este middleware:
+ *   1. Normaliza lo que sea que haya llegado a un AppError.
+ *   2. Loguea segun la gravedad.
+ *   3. Responde siempre con la misma estructura.
  */
-const { HTTP_STATUS, ERROR_MESSAGES } = require('../constants');
+const { normalizeError, RouteNotFoundError } = require('../errors');
 const { failure } = require('../utils/apiResponse');
 const { config } = require('../config');
 
-/** 404 para rutas inexistentes. */
-function notFoundHandler(req, res) {
-  return failure(res, `Ruta no encontrada: ${req.method} ${req.originalUrl}`, HTTP_STATUS.NOT_FOUND);
+/** Cualquier ruta no registrada entra al mismo circuito que el resto de los errores. */
+function notFoundHandler(req, res, next) {
+  return next(new RouteNotFoundError(req.method, req.originalUrl));
 }
 
 /* eslint-disable no-unused-vars */
 function errorHandler(err, req, res, next) {
-  // Errores de validacion del esquema de Mongoose.
-  if (err.name === 'ValidationError') {
-    const details = Object.values(err.errors).map((e) => e.message);
-    return failure(res, 'Datos invalidos', HTTP_STATUS.UNPROCESSABLE_ENTITY, details);
+  const error = normalizeError(err);
+
+  // Un error operacional es un caso previsto del dominio: se loguea corto.
+  // Uno no operacional es un bug: se loguea entero, con la causa original.
+  if (error.isOperational) {
+    if (!config.isTest) {
+      console.warn(`[error] ${error.code} ${req.method} ${req.originalUrl} -> ${error.message}`);
+    }
+  } else {
+    console.error(`[error] ${error.code} ${req.method} ${req.originalUrl}`, error.cause ?? error);
   }
 
-  // Id con formato incorrecto que igual llego al driver.
-  if (err.name === 'CastError') {
-    return failure(res, ERROR_MESSAGES.INVALID_ID, HTTP_STATUS.BAD_REQUEST);
+  const body = error.toJSON();
+
+  // En produccion, un fallo inesperado no filtra su mensaje interno al cliente.
+  if (!error.isOperational && config.isProduction) {
+    delete body.details;
+    body.message = 'Error interno del servidor';
   }
 
-  // Violacion de indice unico (code/email duplicado en condicion de carrera).
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern || {}).join(', ');
-    return failure(res, `Ya existe un registro con ese valor de: ${field}`, HTTP_STATUS.CONFLICT);
-  }
-
-  const status = err.status || HTTP_STATUS.INTERNAL_SERVER_ERROR;
-
-  // Los errores no operacionales se loguean completos; al cliente le llega un mensaje generico.
-  if (status >= HTTP_STATUS.INTERNAL_SERVER_ERROR) {
-    console.error('[error]', err);
-    return failure(
-      res,
-      config.isProduction ? 'Error interno del servidor' : err.message,
-      HTTP_STATUS.INTERNAL_SERVER_ERROR
-    );
-  }
-
-  return failure(res, err.message, status, err.details);
+  return failure(res, { ...body, path: `${req.method} ${req.originalUrl}` }, error.status);
 }
 
 module.exports = { errorHandler, notFoundHandler };

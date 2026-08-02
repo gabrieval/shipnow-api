@@ -5,10 +5,11 @@ const { Router } = require('express');
 const productRoutes = require('./product.routes');
 const userRoutes = require('./user.routes');
 const mockRoutes = require('./mock.routes');
+const healthController = require('../controllers/health.controller');
 
 const router = Router();
 
-router.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+router.get('/health', healthController.check);
 
 router.use('/products', productRoutes);
 router.use('/users', userRoutes);
