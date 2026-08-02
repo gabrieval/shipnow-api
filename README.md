@@ -1,10 +1,14 @@
-# ShipNow API — Estructura profesional por capas
+# ShipNow API — Estructura profesional por capas + módulo de mocking
 
-Pre-entrega Módulo 1 — **Programación Backend III: Testing y Escalabilidad** (CoderHouse).
+Pre-entregas **Módulo 1** y **Módulo 2** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 API de ShipNow refactorizada desde un modelo monolítico a una arquitectura por capas
-**Controller → Service → Repository**, con configuración de entorno validada al arranque
-y un diccionario centralizado de constantes del dominio.
+**Controller → Service → Repository**, con configuración de entorno validada al arranque,
+un diccionario centralizado de constantes del dominio y un módulo de mocking que genera
+usuarios, repartidores, pedidos y entregas de prueba respetando esas mismas capas.
+
+- **Módulo 1** — arquitectura por capas y configuración de entorno.
+- **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
 
 ---
 
@@ -93,23 +97,36 @@ src/
 │   ├── db.config.js       # conexión/desconexión de Mongoose
 │   └── index.js           # barrel de la capa de configuración
 ├── constants/
-│   └── index.js           # USER_ROLES, PRODUCT_STATUS, HTTP_STATUS... (Object.freeze)
+│   └── index.js           # USER_ROLES, ORDER_STATUS, DELIVERY_STATUS... (Object.freeze)
 ├── controllers/
 │   ├── product.controller.js
-│   └── user.controller.js
+│   ├── user.controller.js
+│   └── mock.controller.js
 ├── services/
 │   ├── product.service.js
-│   └── user.service.js
+│   ├── user.service.js
+│   └── mock.service.js    # orquesta el mocking: relaciones, totales, permisos
 ├── repositories/
 │   ├── product.repository.js
-│   └── user.repository.js
+│   ├── user.repository.js
+│   ├── order.repository.js
+│   └── delivery.repository.js
+├── mocks/                 # generadores puros con faker (sin DB, sin Express)
+│   ├── user.mock.js       # usuarios y repartidores
+│   ├── product.mock.js
+│   ├── order.mock.js
+│   ├── delivery.mock.js
+│   └── index.js
 ├── models/
 │   ├── product.model.js   # solo esquema
-│   └── user.model.js      # solo esquema
+│   ├── user.model.js
+│   ├── order.model.js
+│   └── delivery.model.js
 ├── routes/
 │   ├── index.js
 │   ├── product.routes.js  # solo path -> método del controller
-│   └── user.routes.js
+│   ├── user.routes.js
+│   └── mock.routes.js
 ├── middlewares/
 │   ├── requester.middleware.js  # deja quién ejecuta la request en req.requester
 │   └── error.middleware.js      # manejo centralizado de errores
@@ -128,7 +145,7 @@ src/
 ```
 Router  →  Controller  →  Service  →  Repository  →  Model (Mongoose)
                              ↑
-                       constants / AppError
+                    constants / AppError / mocks
 ```
 
 - El **Controller** no importa Mongoose ni el modelo: no sabe si abajo hay Mongo, Postgres o un archivo.
@@ -188,19 +205,91 @@ negocio vive ahí.
 
 ---
 
+## Cómo encaja el mocking en la arquitectura por capas
+
+El módulo de mocking no es un script suelto: se reparte entre las mismas capas que el resto
+de la API, más una capa nueva de generadores.
+
+```
+mock.routes.js  →  mock.controller.js  →  mock.service.js  →  repositories/*  →  models/*
+                                                ↓
+                                            mocks/*.mock.js   (faker, funciones puras)
+```
+
+| Capa | Archivo | De qué se ocupa |
+| --- | --- | --- |
+| Router | `routes/mock.routes.js` | Solo `path → método del controller`. Ni un `faker`, ni un `if` |
+| Controller | `controllers/mock.controller.js` | Lee `req.query` / `req.body` / `req.requester`, elige `200` o `201` |
+| Service | `services/mock.service.js` | Valida cantidades, arma relaciones, calcula totales, hashea, marca `isMock`, controla permisos |
+| Generadores | `mocks/*.mock.js` | Funciones puras: reciben datos y devuelven objetos planos. No conocen Mongoose ni Express |
+| Repository | `repositories/*.repository.js` | `createMany` y `deleteMocks`: lo único que escribe en Mongo |
+
+**Por qué hay una capa de generadores separada del Service.** Los archivos de `mocks/` no
+deciden nada: `generateOrder()` recibe el usuario y los productos con los que tiene que armar
+la relación, nunca sale a buscarlos. Eso los deja como funciones puras, testeables sin base de
+datos ni servidor — que es justamente lo que va a hacer falta en el módulo de testing. Toda
+decisión (cuántos generar, con qué se relacionan, qué se persiste) queda en el Service.
+
+**Por qué no existe un `mock.repository.js`.** Un repositorio que tocara las cuatro colecciones
+rompería la regla que sostiene todo el diseño: *un repositorio por entidad, y es el único que
+conoce su modelo*. La persistencia de los datos de prueba se hace con `createMany()` y
+`deleteMocks()` agregados a cada repositorio, que es donde corresponde: el `OrderRepository`
+sigue siendo el único que sabe que existe `OrderModel`. El `MockService` los orquesta a los
+cuatro, igual que cualquier otro service que necesite cruzar entidades.
+
+**Reglas de negocio del mocking que viven en el Service, no en el generador:**
+
+- El **total** de cada pedido se recalcula como la suma de los subtotales. El generador
+  devuelve `total: 0` a propósito: inventar un total sería inventar una regla de negocio.
+- El **hasheo** de las contraseñas (una sola pasada de bcrypt reutilizada para todo el lote,
+  porque son datos de prueba que comparten contraseña).
+- La marca **`isMock: true`**, que es lo que después permite limpiar sin tocar datos reales.
+- El **preflight**: comprobar que el lote se pueda armar entero *antes* de escribir nada.
+- La **verificación de coherencia** final: ninguna entrega puede quedar en un estado que
+  exija repartidor (`assigned`, `in_transit`, `delivered`, `failed`, `returned`) sin tenerlo
+  asignado. Si el generador no pudo cumplirlo, el service corta antes de insertar.
+
+**Coherencia entre entidades.** El generador de entregas no elige el estado al azar sobre el
+total de opciones: parte del estado del pedido y elige entre los estados de entrega
+compatibles, para no producir combinaciones imposibles como *pedido pendiente / entrega
+entregada*.
+
+| Estado del pedido | Estados de entrega posibles                  |
+| ----------------- | -------------------------------------------- |
+| `pending`         | `pending_assignment`                         |
+| `confirmed`       | `pending_assignment`, `assigned`             |
+| `preparing`       | `assigned`                                   |
+| `shipped`         | `in_transit`, `failed`                       |
+| `delivered`       | `delivered`                                  |
+| `cancelled`       | `pending_assignment`, `returned`             |
+
+Además, `assignedAt` solo existe si hay repartidor y `deliveredAt` solo si la entrega llegó a
+estado `delivered`.
+
+---
+
 ## Constantes en lugar de strings mágicos
 
 Todo el dominio usa `src/constants/index.js`, con objetos congelados con `Object.freeze`:
 
-| Constante             | Valores                                                  |
-| --------------------- | -------------------------------------------------------- |
-| `USER_ROLES`          | `ADMIN`, `USER`                                          |
-| `PRODUCT_STATUS`      | `AVAILABLE`, `OUT_OF_STOCK`, `DISCONTINUED`              |
-| `PRODUCT_CATEGORIES`  | `ELECTRONICS`, `CLOTHING`, `HOME`, `SPORTS`, `OTHER`     |
-| `HTTP_STATUS`         | `OK`, `CREATED`, `BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`… |
-| `ERROR_MESSAGES`      | mensajes reutilizables del dominio                       |
-| `PAGINATION`          | `DEFAULT_PAGE`, `MAX_LIMIT`                              |
-| `SORT_ORDER`          | `ASC`, `DESC`                                            |
+| Constante                            | Valores                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `USER_ROLES`                         | `ADMIN`, `USER`, `COURIER`                                                    |
+| `PRODUCT_STATUS`                     | `AVAILABLE`, `OUT_OF_STOCK`, `DISCONTINUED`                                   |
+| `PRODUCT_CATEGORIES`                 | `ELECTRONICS`, `CLOTHING`, `HOME`, `SPORTS`, `OTHER`                          |
+| `ORDER_STATUS`                       | `PENDING`, `CONFIRMED`, `PREPARING`, `SHIPPED`, `DELIVERED`, `CANCELLED`      |
+| `ORDER_PRIORITY`                     | `LOW`, `NORMAL`, `HIGH`, `URGENT`                                             |
+| `DELIVERY_STATUS`                    | `PENDING_ASSIGNMENT`, `ASSIGNED`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `RETURNED` |
+| `DELIVERY_STATUS_REQUIRING_COURIER`  | estados de entrega que obligan a tener repartidor asignado                    |
+| `MOCK_LIMITS`                        | `DEFAULT_COUNT`, `MAX_COUNT`, `MAX_ITEMS_PER_ORDER`, `DEFAULT_PASSWORD`       |
+| `HTTP_STATUS`                        | `OK`, `CREATED`, `BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`…                      |
+| `ERROR_MESSAGES`                     | mensajes reutilizables del dominio                                            |
+| `PAGINATION`                         | `DEFAULT_PAGE`, `MAX_LIMIT`                                                   |
+| `SORT_ORDER`                         | `ASC`, `DESC`                                                                 |
+
+El **repartidor** no es una entidad aparte: es un `User` con rol `COURIER`. Así una entrega
+puede referenciarlo con la misma colección de usuarios y el rol queda validado por el mismo
+`enum` que el resto.
 
 Los `enum` de los modelos se alimentan de estos mismos objetos
 (`enum: Object.values(USER_ROLES)`), así que no hay forma de que el esquema y la lógica se
@@ -252,6 +341,142 @@ Query params del listado: `?page=1&limit=10&category=electronics&status=availabl
 | PATCH  | `/users/:uid/role`    | ADMIN              | Cambia el rol (protege al último admin)        |
 | DELETE | `/users/:uid`         | ADMIN              | Baja lógica (protege al último admin)          |
 
+### Mocks — `/api/mocks`
+
+Router del Módulo 2. Los `GET` **solo generan y devuelven**: no escriben nada en MongoDB.
+El `POST` y el `DELETE` son los únicos que tocan la base, y exigen rol `admin`.
+
+| Método | Ruta                       | Permiso | Persiste | Descripción                                             |
+| ------ | -------------------------- | ------- | -------- | ------------------------------------------------------- |
+| GET    | `/mocks/users`             | público | no       | Usuarios simulados con roles válidos                    |
+| GET    | `/mocks/couriers`          | público | no       | Repartidores (usuarios con rol `courier`)               |
+| GET    | `/mocks/products`          | público | no       | Productos simulados                                     |
+| GET    | `/mocks/orders`            | público | no       | Pedidos con estados, prioridades e items                |
+| GET    | `/mocks/deliveries`        | público | no       | Entregas asociadas a pedidos y repartidores             |
+| GET    | `/mocks/dataset`           | público | no       | Set completo y relacionado entre sí, de una sola vez    |
+| GET    | `/mocks/summary`           | público | no       | Cuántos datos de prueba hay hoy en la base              |
+| POST   | `/mocks/generateData`      | ADMIN   | **sí**   | Inserta el lote en MongoDB                              |
+| DELETE | `/mocks`                   | ADMIN   | **sí**   | Borra solo lo marcado como dato de prueba               |
+
+#### Qué datos se pueden generar
+
+| Entidad         | Se genera con                                    | Relaciones que respeta                                              |
+| --------------- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| **Usuarios**    | nombre, apellido, email único, rol `user`/`admin` | —                                                                   |
+| **Repartidores**| igual que un usuario, pero rol `courier` fijo     | —                                                                   |
+| **Productos**   | título, descripción, código único, precio, stock  | `status` derivado del stock, igual que en `ProductService`           |
+| **Pedidos**     | código, items, total, estado, prioridad, dirección | `user` → un usuario existente; `items[].product` → productos existentes |
+| **Entregas**    | tracking, estado, fechas, intentos                | `order` → un pedido (1 a 1); `courier` → un usuario con rol `courier` |
+
+#### Vista previa (sin tocar la base)
+
+Todos los `GET` aceptan `?count=N` (entre 1 y 200; por defecto 10):
+
+```bash
+curl "http://localhost:8080/api/mocks/users?count=5"
+```
+
+```bash
+curl "http://localhost:8080/api/mocks/couriers?count=3"
+```
+
+```bash
+curl "http://localhost:8080/api/mocks/orders?count=4"
+```
+
+```bash
+curl "http://localhost:8080/api/mocks/deliveries?count=4"
+```
+
+El dataset completo acepta una cantidad por entidad y devuelve todo ya relacionado, más un
+resumen de cómo quedaron las relaciones:
+
+```bash
+curl "http://localhost:8080/api/mocks/dataset?users=5&couriers=2&products=8&orders=6"
+```
+
+```json
+{
+  "status": "success",
+  "payload": {
+    "users": [ ],
+    "couriers": [ ],
+    "products": [ ],
+    "orders": [ ],
+    "deliveries": [ ],
+    "relations": {
+      "ordersPerUser": 1.2,
+      "deliveriesWithCourier": 4,
+      "deliveriesPendingAssignment": 2,
+      "couriersAvailable": 2
+    }
+  }
+}
+```
+
+Los pedidos y entregas de la vista previa llevan `_id` generados al vuelo, que **no existen
+en la base**: están solo para que se vea cómo quedan armadas las relaciones.
+
+#### Carga de datos de prueba en MongoDB
+
+```bash
+curl -X POST http://localhost:8080/api/mocks/generateData -H "Content-Type: application/json" -H "x-user-role: admin" -d "{\"users\":10,\"couriers\":4,\"products\":20,\"orders\":15,\"deliveries\":15}"
+```
+
+Todos los campos del body son opcionales; los valores por defecto son
+`users: 5`, `couriers: 3`, `products: 10`, `orders: 5` y `deliveries: 5` (una por pedido).
+
+Respuesta:
+
+```json
+{
+  "status": "success",
+  "payload": {
+    "inserted": { "users": 10, "couriers": 4, "products": 20, "orders": 15, "deliveries": 15 },
+    "credentials": {
+      "note": "Todos los usuarios simulados comparten la misma contrasena",
+      "password": "mock1234",
+      "sampleEmail": "ana.perez.0k3fa@shipnow.dev"
+    },
+    "relations": { "ordersPerUser": 1.5, "deliveriesWithCourier": 11, "deliveriesPendingAssignment": 4, "couriersAvailable": 4 }
+  }
+}
+```
+
+Los usuarios simulados quedan con la contraseña **`mock1234`** (hasheada con bcrypt, igual
+que un alta real), así que sirven para probar el login:
+
+```bash
+curl -X POST http://localhost:8080/api/users/login -H "Content-Type: application/json" -d "{\"email\":\"PEGAR_EL_sampleEmail\",\"password\":\"mock1234\"}"
+```
+
+Se pueden generar pedidos sobre datos que **ya están** en la base, sin crear usuarios ni
+productos nuevos, mandando `0` en esas cantidades:
+
+```bash
+curl -X POST http://localhost:8080/api/mocks/generateData -H "Content-Type: application/json" -H "x-user-role: admin" -d "{\"users\":0,\"couriers\":0,\"products\":0,\"orders\":5,\"deliveries\":5}"
+```
+
+Si no hay usuarios o productos con los que armar esos pedidos, la carga se rechaza con `400`
+**antes de escribir nada**, para no dejar la base a medio cargar.
+
+#### Ver y limpiar los datos de prueba
+
+Todo lo que inserta el módulo queda marcado con `isMock: true`. Eso permite contarlo:
+
+```bash
+curl http://localhost:8080/api/mocks/summary
+```
+
+Y borrarlo sin arrastrar datos reales:
+
+```bash
+curl -X DELETE http://localhost:8080/api/mocks -H "x-user-role: admin"
+```
+
+El `DELETE` borra **solo** los documentos marcados como simulados. Un usuario o un producto
+cargado a mano, o por `npm run seed`, no se toca.
+
 ### Formato de respuesta
 
 Éxito:
@@ -289,6 +514,25 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 2 — Mocking y carga de datos
+
+| Criterio                                                                        | Dónde se verifica                                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| La lógica de mocking respeta las capas y no queda en los archivos de rutas       | `mock.routes.js` son 9 líneas de `path → controller`; la lógica está en `mock.service.js` |
+| Existe un router específico bajo `/api/mocks`                                    | `src/routes/mock.routes.js`, montado en `src/routes/index.js`                        |
+| Endpoint(s) que devuelven datos simulados sin guardarlos                         | Los 6 `GET` de `/api/mocks` (verificado: `/mocks/summary` sigue en cero después)      |
+| Endpoint que inserta registros de prueba de forma controlada                     | `POST /api/mocks/generateData`: solo ADMIN, con tope de 200 por entidad y preflight   |
+| Usuarios con roles válidos                                                       | `generateUser` toma el rol de `USER_ROLES`; los repartidores usan `USER_ROLES.COURIER` |
+| Pedidos con estados y prioridades permitidos                                     | `generateOrder` elige de `ORDER_STATUS` y `ORDER_PRIORITY`                            |
+| Entregas asociadas a pedidos y, cuando corresponde, a repartidores               | `generateDeliveries` es 1 a 1 contra pedidos; el `courier` se asigna según el estado  |
+| Relación pedido ↔ usuario                                                        | `generateOrder` recibe el usuario; nunca genera un pedido huérfano                    |
+| Relación entrega ↔ pedido                                                        | Índice `unique` en `order` dentro de `delivery.model.js`                              |
+| Repartidor con rol coherente                                                     | Solo se asignan usuarios generados con `USER_ROLES.COURIER`                           |
+| Constantes en lugar de strings sueltos                                           | Ningún `.mock.js` escribe un estado, rol o prioridad a mano                            |
+| Datos simulados con estructura similar a los modelos reales                      | Se insertan con los modelos reales: si no validaran contra el esquema, fallarían       |
+
+### Módulo 1 — Arquitectura por capas
 
 | Criterio                                                              | Dónde se verifica                                                                 |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------- |

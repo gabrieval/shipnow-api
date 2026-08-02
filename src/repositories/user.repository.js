@@ -32,6 +32,15 @@ class UserRepository {
     return mongoose.isValidObjectId(id);
   }
 
+  /**
+   * Genera un ObjectId nuevo sin tocar la base. Lo usa el modulo de mocking para
+   * armar relaciones en los datos de vista previa, sin que el Service tenga que
+   * importar Mongoose.
+   */
+  newId() {
+    return new mongoose.Types.ObjectId();
+  }
+
   /** Listado paginado de usuarios activos. */
   async getAll({ filter = {}, page = 1, limit = 10, sortBy, order } = {}) {
     const query = this.#withBaseFilter(filter);
@@ -94,6 +103,25 @@ class UserRepository {
   async create(data) {
     const created = await this.model.create(data);
     return this.getById(created._id);
+  }
+
+  /**
+   * Insercion masiva para la carga de datos de prueba. Las contrasenas ya vienen
+   * hasheadas desde el Service. `ordered: false` evita que un email duplicado
+   * aborte todo el lote.
+   */
+  async createMany(documents = []) {
+    if (documents.length === 0) return [];
+    // Sin `lean`: se necesita que Mongoose aplique defaults (isActive, status) y
+    // valide los enums de cada documento antes de escribirlo.
+    const inserted = await this.model.insertMany(documents, { ordered: false });
+    return inserted.map((doc) => doc.toObject());
+  }
+
+  /** Borra fisicamente solo los usuarios marcados como simulados. */
+  async deleteMocks() {
+    const { deletedCount } = await this.model.deleteMany({ isMock: true });
+    return deletedCount;
   }
 
   async update(id, changes) {
