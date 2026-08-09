@@ -7,8 +7,16 @@
  */
 const bcrypt = require('bcrypt');
 const userRepository = require('../repositories/user.repository');
-const AppError = require('../utils/AppError');
-const { USER_ROLES, ERROR_MESSAGES, PAGINATION, SORT_ORDER } = require('../constants');
+const {
+  ValidationError,
+  ForbiddenRoleError,
+  UserNotFoundError,
+  EmailInUseError,
+  InvalidCredentialsError,
+  InvalidRoleError,
+  LastAdminError,
+} = require('../errors');
+const { USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
 const { config } = require('../config');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -24,7 +32,7 @@ class UserService {
 
   #assertIsAdmin(requesterRole) {
     if (requesterRole !== USER_ROLES.ADMIN) {
-      throw AppError.forbidden(ERROR_MESSAGES.FORBIDDEN_ROLE);
+      throw new ForbiddenRoleError({ requiredRole: USER_ROLES.ADMIN, receivedRole: requesterRole });
     }
   }
 
@@ -32,30 +40,30 @@ class UserService {
   #assertIsSelfOrAdmin(targetId, requester = {}) {
     const isSelf = requester.id !== undefined && String(requester.id) === String(targetId);
     if (!isSelf && requester.role !== USER_ROLES.ADMIN) {
-      throw AppError.forbidden(ERROR_MESSAGES.FORBIDDEN_ROLE);
+      throw new ForbiddenRoleError({ reason: 'Solo el propio usuario o un administrador pueden operar sobre este recurso' });
     }
   }
 
   #validateEmail(email) {
     const normalized = String(email || '').toLowerCase().trim();
     if (!EMAIL_REGEX.test(normalized)) {
-      throw AppError.badRequest('El email no tiene un formato valido');
+      throw new ValidationError([{ field: 'email', message: 'No tiene un formato valido', received: email }]);
     }
     return normalized;
   }
 
   #validatePassword(password) {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-      throw AppError.badRequest(`La contrasena debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
+      throw new ValidationError([
+        { field: 'password', message: `Debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres` },
+      ]);
     }
     return password;
   }
 
   #validateRole(role) {
     if (!Object.values(USER_ROLES).includes(role)) {
-      throw AppError.badRequest(
-        `Rol invalido. Valores admitidos: ${Object.values(USER_ROLES).join(', ')}`
-      );
+      throw new InvalidRoleError(role, Object.values(USER_ROLES));
     }
     return role;
   }
@@ -67,7 +75,7 @@ class UserService {
   async #assertIsNotLastAdmin(user) {
     if (user.role !== USER_ROLES.ADMIN) return;
     const admins = await this.repository.countBy({ role: USER_ROLES.ADMIN });
-    if (admins <= 1) throw AppError.conflict(ERROR_MESSAGES.LAST_ADMIN);
+    if (admins <= 1) throw new LastAdminError();
   }
 
   #normalizeQuery(query = {}) {
@@ -115,7 +123,7 @@ class UserService {
     this.#assertIsSelfOrAdmin(id, requester);
 
     const user = await this.repository.getById(id);
-    if (!user) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!user) throw new UserNotFoundError(id);
     return this.#withFullName(user);
   }
 
@@ -130,7 +138,10 @@ class UserService {
       (field) => payload[field] === undefined || String(payload[field]).trim() === ''
     );
     if (missing.length > 0) {
-      throw AppError.badRequest(`Faltan campos obligatorios: ${missing.join(', ')}`);
+      throw new ValidationError(
+        missing.map((field) => ({ field, message: 'Es obligatorio' })),
+        `Faltan campos obligatorios: ${missing.join(', ')}`
+      );
     }
 
     const normalizedEmail = this.#validateEmail(email);
@@ -143,7 +154,7 @@ class UserService {
     }
 
     const existing = await this.repository.getByEmail(normalizedEmail, { includeInactive: true });
-    if (existing) throw AppError.conflict(ERROR_MESSAGES.USER_EMAIL_IN_USE);
+    if (existing) throw new EmailInUseError(normalizedEmail);
 
     // El hasheo es regla de negocio: vive aca, no en el modelo ni en el repo.
     const hashedPassword = await bcrypt.hash(password, config.saltRounds);
@@ -164,7 +175,7 @@ class UserService {
     this.#assertIsSelfOrAdmin(id, requester);
 
     const current = await this.repository.getById(id);
-    if (!current) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!current) throw new UserNotFoundError(id);
 
     const changes = {};
 
@@ -175,7 +186,7 @@ class UserService {
       const normalizedEmail = this.#validateEmail(payload.email);
       if (normalizedEmail !== current.email) {
         const duplicated = await this.repository.getByEmail(normalizedEmail, { includeInactive: true });
-        if (duplicated) throw AppError.conflict(ERROR_MESSAGES.USER_EMAIL_IN_USE);
+        if (duplicated) throw new EmailInUseError(normalizedEmail);
         changes.email = normalizedEmail;
       }
     }
@@ -187,15 +198,21 @@ class UserService {
 
     // El rol nunca se cambia por esta via: tiene su propio caso de uso.
     if (payload.role !== undefined) {
-      throw AppError.badRequest('Para cambiar el rol usa PATCH /api/users/:id/role');
+      throw new ValidationError(
+        [{ field: 'role', message: 'El rol no se cambia por esta via' }],
+        'Para cambiar el rol usa PATCH /api/users/:uid/role'
+      );
     }
 
     if (Object.keys(changes).length === 0) {
-      throw AppError.badRequest('No se enviaron campos validos para actualizar');
+      throw new ValidationError(
+        { allowedFields: ['firstName', 'lastName', 'email', 'password'] },
+        'No se enviaron campos validos para actualizar'
+      );
     }
 
     const updated = await this.repository.update(id, changes);
-    if (!updated) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!updated) throw new UserNotFoundError(id);
     return this.#withFullName(updated);
   }
 
@@ -205,7 +222,7 @@ class UserService {
     const newRole = this.#validateRole(role);
 
     const user = await this.repository.getById(id);
-    if (!user) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!user) throw new UserNotFoundError(id);
 
     if (user.role === newRole) return this.#withFullName(user);
     if (newRole !== USER_ROLES.ADMIN) await this.#assertIsNotLastAdmin(user);
@@ -219,12 +236,12 @@ class UserService {
     this.#assertIsAdmin(requesterRole);
 
     const user = await this.repository.getById(id);
-    if (!user) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!user) throw new UserNotFoundError(id);
 
     await this.#assertIsNotLastAdmin(user);
 
     const deleted = await this.repository.softDelete(id);
-    if (!deleted) throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
+    if (!deleted) throw new UserNotFoundError(id);
     return this.#withFullName(deleted);
   }
 
@@ -235,10 +252,10 @@ class UserService {
   async verifyCredentials(email, password) {
     const normalizedEmail = this.#validateEmail(email);
     const user = await this.repository.getByEmailWithPassword(normalizedEmail);
-    if (!user) throw AppError.unauthorized(ERROR_MESSAGES.INVALID_CREDENTIALS);
+    if (!user) throw new InvalidCredentialsError();
 
     const isValid = await bcrypt.compare(String(password), user.password);
-    if (!isValid) throw AppError.unauthorized(ERROR_MESSAGES.INVALID_CREDENTIALS);
+    if (!isValid) throw new InvalidCredentialsError();
 
     const { password: _omit, ...safeUser } = user;
     return this.#withFullName(safeUser);

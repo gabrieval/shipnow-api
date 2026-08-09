@@ -22,13 +22,16 @@ const {
   generateDeliveries,
 } = require('../mocks');
 
-const AppError = require('../utils/AppError');
 const {
-  USER_ROLES,
-  MOCK_LIMITS,
-  ERROR_MESSAGES,
-  DELIVERY_STATUS_REQUIRING_COURIER,
-} = require('../constants');
+  ForbiddenRoleError,
+  InvalidMockCountError,
+  MockMissingUsersError,
+  MockMissingProductsError,
+  MockMissingOrdersError,
+  MockIncoherentDataError,
+  MockPersistenceError,
+} = require('../errors');
+const { USER_ROLES, MOCK_LIMITS, DELIVERY_STATUS_REQUIRING_COURIER } = require('../constants');
 const { config } = require('../config');
 
 class MockService {
@@ -47,29 +50,56 @@ class MockService {
   // --- Helpers ------------------------------------------------------------
 
   /**
-   * Normaliza y acota una cantidad pedida por el cliente.
-   * @param {*} value valor crudo (viene como string desde la query)
+   * Normaliza y valida una cantidad pedida por el cliente.
+   *
+   * Distingue el motivo del rechazo (no numerico, negativo, decimal, cero,
+   * fuera de rango) para que el error explique QUE esta mal y no solo que algo
+   * lo esta. Los valores llegan como string desde la query o crudos del body.
+   *
+   * @param {*} value valor crudo
    * @param {{fallback?: number, allowZero?: boolean, label?: string}} [options]
    */
   #normalizeCount(value, { fallback = MOCK_LIMITS.DEFAULT_COUNT, allowZero = false, label = 'count' } = {}) {
-    if (value === undefined || value === '') return fallback;
+    if (value === undefined || value === null || value === '') return fallback;
 
-    const parsed = Number(value);
     const min = allowZero ? 0 : 1;
+    const fail = (reason, received = value) => {
+      throw new InvalidMockCountError({ field: label, received, min, max: MOCK_LIMITS.MAX_COUNT, reason });
+    };
 
-    if (!Number.isInteger(parsed) || parsed < min || parsed > MOCK_LIMITS.MAX_COUNT) {
-      throw AppError.badRequest(
-        `${label}: ${ERROR_MESSAGES.INVALID_COUNT} ${MOCK_LIMITS.MAX_COUNT}${allowZero ? ' (0 tambien es valido)' : ''}`
-      );
+    if (typeof value === 'boolean' || Array.isArray(value) || typeof value === 'object') {
+      fail('tiene que ser un numero');
     }
 
+    const parsed = Number(value);
+
+    if (Number.isNaN(parsed)) fail('no es un numero');
+    if (!Number.isFinite(parsed)) fail('no es un numero finito');
+    if (!Number.isInteger(parsed)) fail('tiene que ser un entero, no un decimal', parsed);
+    if (parsed < 0) fail('no puede ser negativo', parsed);
+    if (parsed === 0 && !allowZero) fail('tiene que ser mayor a 0', parsed);
+    if (parsed > MOCK_LIMITS.MAX_COUNT) fail(`supera el maximo permitido de ${MOCK_LIMITS.MAX_COUNT}`, parsed);
+
     return parsed;
+  }
+
+  /**
+   * Envuelve una escritura masiva para que un fallo de MongoDB (indice unico,
+   * conexion caida, documento que no valida) salga como un error del dominio y
+   * no como un error crudo del driver.
+   */
+  async #persist(entity, operation) {
+    try {
+      return await operation();
+    } catch (cause) {
+      throw new MockPersistenceError({ entity, cause });
+    }
   }
 
   /** Solo un ADMIN puede escribir o borrar datos de prueba en la base. */
   #assertCanPersist(requesterRole) {
     if (requesterRole !== USER_ROLES.ADMIN) {
-      throw AppError.forbidden(ERROR_MESSAGES.FORBIDDEN_ROLE);
+      throw new ForbiddenRoleError({ requiredRole: USER_ROLES.ADMIN, receivedRole: requesterRole });
     }
   }
 
@@ -253,11 +283,13 @@ class MockService {
       generateCouriers(couriersCount).map((courier) => ({ ...courier, password: hashedPassword }))
     );
 
-    const insertedUsers = await this.userRepository.createMany(usersToInsert);
-    const insertedCouriers = await this.userRepository.createMany(couriersToInsert);
+    const insertedUsers = await this.#persist('users', () => this.userRepository.createMany(usersToInsert));
+    const insertedCouriers = await this.#persist('couriers', () => this.userRepository.createMany(couriersToInsert));
 
     // 2. Productos.
-    const insertedProducts = await this.productRepository.createMany(this.#markAsMock(generateProducts(productsCount)));
+    const insertedProducts = await this.#persist('products', () =>
+      this.productRepository.createMany(this.#markAsMock(generateProducts(productsCount)))
+    );
 
     // 3. Pedidos: se apoyan en los usuarios/productos recien creados o, si no se
     //    pidieron, en los que ya estaban en la base (resueltos en el preflight).
@@ -269,7 +301,7 @@ class MockService {
       const orders = this.#applyOrderTotals(
         generateOrders(ordersCount, { users: availableUsers, products: availableProducts })
       );
-      insertedOrders = await this.orderRepository.createMany(this.#markAsMock(orders));
+      insertedOrders = await this.#persist('orders', () => this.orderRepository.createMany(this.#markAsMock(orders)));
     }
 
     // 4. Entregas: una por pedido, hasta el maximo pedido por el cliente.
@@ -281,7 +313,9 @@ class MockService {
       const deliveries = generateDeliveries({ orders: targetOrders, couriers: availableCouriers });
       this.#assertDeliveriesAreCoherent(deliveries);
 
-      insertedDeliveries = await this.deliveryRepository.createMany(this.#markAsMock(deliveries));
+      insertedDeliveries = await this.#persist('deliveries', () =>
+        this.deliveryRepository.createMany(this.#markAsMock(deliveries))
+      );
     }
 
     return {
@@ -319,18 +353,18 @@ class MockService {
     let fallbackProducts = [];
 
     if (deliveriesCount > 0 && ordersCount === 0) {
-      throw AppError.badRequest(ERROR_MESSAGES.NO_ORDERS_FOR_DELIVERIES);
+      throw new MockMissingOrdersError();
     }
 
     if (ordersCount > 0) {
       if (usersCount === 0) {
         fallbackUsers = await this.#fetchExistingUsers();
-        if (fallbackUsers.length === 0) throw AppError.badRequest(ERROR_MESSAGES.NO_USERS_FOR_ORDERS);
+        if (fallbackUsers.length === 0) throw new MockMissingUsersError();
       }
 
       if (productsCount === 0) {
         fallbackProducts = await this.#fetchExistingProducts();
-        if (fallbackProducts.length === 0) throw AppError.badRequest(ERROR_MESSAGES.NO_PRODUCTS_FOR_ORDERS);
+        if (fallbackProducts.length === 0) throw new MockMissingProductsError();
       }
     }
 
@@ -347,9 +381,11 @@ class MockService {
     );
 
     if (broken.length > 0) {
-      throw AppError.badRequest(
-        `Se generaron ${broken.length} entregas en un estado que exige repartidor pero sin repartidor asignado`
-      );
+      throw new MockIncoherentDataError({
+        rule: 'Toda entrega en un estado que exige repartidor debe tener uno asignado',
+        affected: broken.length,
+        statuses: [...new Set(broken.map((delivery) => delivery.status))],
+      });
     }
   }
 
@@ -398,10 +434,10 @@ class MockService {
     this.#assertCanPersist(requesterRole);
 
     // Orden inverso al de creacion, para no dejar entregas apuntando a pedidos borrados.
-    const deliveries = await this.deliveryRepository.deleteMocks();
-    const orders = await this.orderRepository.deleteMocks();
-    const products = await this.productRepository.deleteMocks();
-    const users = await this.userRepository.deleteMocks();
+    const deliveries = await this.#persist('deliveries', () => this.deliveryRepository.deleteMocks());
+    const orders = await this.#persist('orders', () => this.orderRepository.deleteMocks());
+    const products = await this.#persist('products', () => this.productRepository.deleteMocks());
+    const users = await this.#persist('users', () => this.userRepository.deleteMocks());
 
     return { deleted: { deliveries, orders, products, users } };
   }

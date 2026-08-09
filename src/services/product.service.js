@@ -4,17 +4,23 @@
  * Es el unico que decide: que se puede crear, quien puede hacerlo, como se
  * deriva el estado de un producto a partir del stock y como se calculan
  * totales. Habla con el Repository, nunca con Mongoose.
+ *
+ * Manejo de errores: detecta el problema y lanza el error de dominio que
+ * corresponde. No arma respuestas HTTP ni elige status codes; de eso se ocupa
+ * el middleware global.
  */
 const productRepository = require('../repositories/product.repository');
-const AppError = require('../utils/AppError');
 const {
-  PRODUCT_STATUS,
-  PRODUCT_CATEGORIES,
-  USER_ROLES,
-  ERROR_MESSAGES,
-  PAGINATION,
-  SORT_ORDER,
-} = require('../constants');
+  ValidationError,
+  ForbiddenRoleError,
+  ProductNotFoundError,
+  ProductCodeInUseError,
+  ProductDiscontinuedError,
+  InsufficientStockError,
+  InvalidProductStatusError,
+  InvalidProductCategoryError,
+} = require('../errors');
+const { PRODUCT_STATUS, PRODUCT_CATEGORIES, USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
 const { config } = require('../config');
 
 /** Campos que el cliente puede enviar. Cualquier otro se descarta. */
@@ -40,7 +46,45 @@ class ProductService {
   /** Solo un ADMIN modifica el catalogo. */
   #assertCanManage(requesterRole) {
     if (requesterRole !== USER_ROLES.ADMIN) {
-      throw AppError.forbidden(ERROR_MESSAGES.FORBIDDEN_ROLE);
+      throw new ForbiddenRoleError({ requiredRole: USER_ROLES.ADMIN, receivedRole: requesterRole });
+    }
+  }
+
+  /** Valida la categoria contra las constantes del dominio. */
+  #assertValidCategory(category) {
+    if (!Object.values(PRODUCT_CATEGORIES).includes(category)) {
+      throw new InvalidProductCategoryError(category, Object.values(PRODUCT_CATEGORIES));
+    }
+  }
+
+  /** Valida el estado contra las constantes del dominio. */
+  #assertValidStatus(status) {
+    if (!Object.values(PRODUCT_STATUS).includes(status)) {
+      throw new InvalidProductStatusError(status, Object.values(PRODUCT_STATUS));
+    }
+  }
+
+  /** Precio: numero finito y no negativo. */
+  #parsePrice(value) {
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) {
+      throw new ValidationError([{ field: 'price', message: 'Debe ser un numero mayor o igual a 0', received: value }]);
+    }
+    return price;
+  }
+
+  /** Stock: entero y no negativo. */
+  #parseStock(value) {
+    const stock = Number(value);
+    if (!Number.isInteger(stock) || stock < 0) {
+      throw new ValidationError([{ field: 'stock', message: 'Debe ser un entero mayor o igual a 0', received: value }]);
+    }
+    return stock;
+  }
+
+  #assertValidThumbnails(value) {
+    if (!Array.isArray(value)) {
+      throw new ValidationError([{ field: 'thumbnails', message: 'Debe ser un array de URLs', received: value }]);
     }
   }
 
@@ -53,20 +97,12 @@ class ProductService {
     const filter = {};
 
     if (query.category) {
-      if (!Object.values(PRODUCT_CATEGORIES).includes(query.category)) {
-        throw AppError.badRequest(
-          `Categoria invalida. Valores admitidos: ${Object.values(PRODUCT_CATEGORIES).join(', ')}`
-        );
-      }
+      this.#assertValidCategory(query.category);
       filter.category = query.category;
     }
 
     if (query.status) {
-      if (!Object.values(PRODUCT_STATUS).includes(query.status)) {
-        throw AppError.badRequest(
-          `Estado invalido. Valores admitidos: ${Object.values(PRODUCT_STATUS).join(', ')}`
-        );
-      }
+      this.#assertValidStatus(query.status);
       filter.status = query.status;
     }
 
@@ -93,30 +129,17 @@ class ProductService {
       (field) => data[field] === undefined || String(data[field]).trim() === ''
     );
     if (missing.length > 0) {
-      throw AppError.badRequest(`Faltan campos obligatorios: ${missing.join(', ')}`);
-    }
-
-    const price = Number(data.price);
-    if (!Number.isFinite(price) || price < 0) {
-      throw AppError.badRequest('El precio debe ser un numero mayor o igual a 0');
-    }
-    data.price = price;
-
-    const stock = data.stock === undefined ? 0 : Number(data.stock);
-    if (!Number.isInteger(stock) || stock < 0) {
-      throw AppError.badRequest('El stock debe ser un entero mayor o igual a 0');
-    }
-    data.stock = stock;
-
-    if (data.category !== undefined && !Object.values(PRODUCT_CATEGORIES).includes(data.category)) {
-      throw AppError.badRequest(
-        `Categoria invalida. Valores admitidos: ${Object.values(PRODUCT_CATEGORIES).join(', ')}`
+      throw new ValidationError(
+        missing.map((field) => ({ field, message: 'Es obligatorio' })),
+        `Faltan campos obligatorios: ${missing.join(', ')}`
       );
     }
 
-    if (data.thumbnails !== undefined && !Array.isArray(data.thumbnails)) {
-      throw AppError.badRequest('thumbnails debe ser un array de URLs');
-    }
+    data.price = this.#parsePrice(data.price);
+    data.stock = data.stock === undefined ? 0 : this.#parseStock(data.stock);
+
+    if (data.category !== undefined) this.#assertValidCategory(data.category);
+    if (data.thumbnails !== undefined) this.#assertValidThumbnails(data.thumbnails);
 
     return data;
   }
@@ -154,7 +177,7 @@ class ProductService {
 
   async getById(id) {
     const product = await this.repository.getById(id);
-    if (!product) throw AppError.notFound(ERROR_MESSAGES.PRODUCT_NOT_FOUND);
+    if (!product) throw new ProductNotFoundError(id);
     return product;
   }
 
@@ -170,7 +193,7 @@ class ProductService {
     data.code = String(data.code).trim().toUpperCase();
 
     const existing = await this.repository.getByCode(data.code, { includeInactive: true });
-    if (existing) throw AppError.conflict(ERROR_MESSAGES.PRODUCT_CODE_IN_USE);
+    if (existing) throw new ProductCodeInUseError(data.code);
 
     data.status = this.#resolveStatus(data.stock);
 
@@ -182,48 +205,28 @@ class ProductService {
     this.#assertCanManage(requesterRole);
 
     const current = await this.repository.getById(id);
-    if (!current) throw AppError.notFound(ERROR_MESSAGES.PRODUCT_NOT_FOUND);
+    if (!current) throw new ProductNotFoundError(id);
 
     const changes = {};
 
     if (payload.title !== undefined) changes.title = String(payload.title).trim();
     if (payload.description !== undefined) changes.description = String(payload.description).trim();
+
     if (payload.thumbnails !== undefined) {
-      if (!Array.isArray(payload.thumbnails)) throw AppError.badRequest('thumbnails debe ser un array de URLs');
+      this.#assertValidThumbnails(payload.thumbnails);
       changes.thumbnails = payload.thumbnails;
     }
 
-    if (payload.price !== undefined) {
-      const price = Number(payload.price);
-      if (!Number.isFinite(price) || price < 0) {
-        throw AppError.badRequest('El precio debe ser un numero mayor o igual a 0');
-      }
-      changes.price = price;
-    }
-
-    if (payload.stock !== undefined) {
-      const stock = Number(payload.stock);
-      if (!Number.isInteger(stock) || stock < 0) {
-        throw AppError.badRequest('El stock debe ser un entero mayor o igual a 0');
-      }
-      changes.stock = stock;
-    }
+    if (payload.price !== undefined) changes.price = this.#parsePrice(payload.price);
+    if (payload.stock !== undefined) changes.stock = this.#parseStock(payload.stock);
 
     if (payload.category !== undefined) {
-      if (!Object.values(PRODUCT_CATEGORIES).includes(payload.category)) {
-        throw AppError.badRequest(
-          `Categoria invalida. Valores admitidos: ${Object.values(PRODUCT_CATEGORIES).join(', ')}`
-        );
-      }
+      this.#assertValidCategory(payload.category);
       changes.category = payload.category;
     }
 
     if (payload.status !== undefined) {
-      if (!Object.values(PRODUCT_STATUS).includes(payload.status)) {
-        throw AppError.badRequest(
-          `Estado invalido. Valores admitidos: ${Object.values(PRODUCT_STATUS).join(', ')}`
-        );
-      }
+      this.#assertValidStatus(payload.status);
       changes.status = payload.status;
     }
 
@@ -231,13 +234,16 @@ class ProductService {
       const code = String(payload.code).trim().toUpperCase();
       if (code !== current.code) {
         const duplicated = await this.repository.getByCode(code, { includeInactive: true });
-        if (duplicated) throw AppError.conflict(ERROR_MESSAGES.PRODUCT_CODE_IN_USE);
+        if (duplicated) throw new ProductCodeInUseError(code);
         changes.code = code;
       }
     }
 
     if (Object.keys(changes).length === 0) {
-      throw AppError.badRequest('No se enviaron campos validos para actualizar');
+      throw new ValidationError(
+        { allowedFields: CREATABLE_FIELDS.concat('status') },
+        'No se enviaron campos validos para actualizar'
+      );
     }
 
     // El estado se recalcula salvo que el cliente lo haya fijado a mano.
@@ -246,7 +252,7 @@ class ProductService {
     }
 
     const updated = await this.repository.update(id, changes);
-    if (!updated) throw AppError.notFound(ERROR_MESSAGES.PRODUCT_NOT_FOUND);
+    if (!updated) throw new ProductNotFoundError(id);
     return updated;
   }
 
@@ -257,17 +263,20 @@ class ProductService {
   async decreaseStock(id, quantity) {
     const amount = Number(quantity);
     if (!Number.isInteger(amount) || amount <= 0) {
-      throw AppError.badRequest('La cantidad debe ser un entero mayor a 0');
+      throw new ValidationError([
+        { field: 'quantity', message: 'Debe ser un entero mayor a 0', received: quantity },
+      ]);
     }
 
     const product = await this.repository.getById(id);
-    if (!product) throw AppError.notFound(ERROR_MESSAGES.PRODUCT_NOT_FOUND);
+    if (!product) throw new ProductNotFoundError(id);
     if (product.status === PRODUCT_STATUS.DISCONTINUED) {
-      throw AppError.conflict(ERROR_MESSAGES.PRODUCT_DISCONTINUED);
+      throw new ProductDiscontinuedError(product.code);
     }
 
     const updated = await this.repository.adjustStock(id, -amount);
-    if (!updated) throw AppError.conflict(ERROR_MESSAGES.INSUFFICIENT_STOCK);
+    // El update atomico devuelve null si el filtro `stock >= amount` no se cumplio.
+    if (!updated) throw new InsufficientStockError({ requested: amount, available: product.stock });
 
     // Tras descontar, el estado puede haber cambiado a sin stock.
     const nextStatus = this.#resolveStatus(updated.stock, updated.status);
@@ -283,7 +292,7 @@ class ProductService {
     this.#assertCanManage(requesterRole);
 
     const deleted = await this.repository.softDelete(id);
-    if (!deleted) throw AppError.notFound(ERROR_MESSAGES.PRODUCT_NOT_FOUND);
+    if (!deleted) throw new ProductNotFoundError(id);
     return deleted;
   }
 }
