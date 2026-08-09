@@ -1,0 +1,362 @@
+paths:
+  /users:
+    get:
+      tags: [Users]
+      summary: Lista usuarios
+      description: Listado paginado de usuarios activos. **Requiere rol `admin`.**
+      parameters:
+        - $ref: '#/components/parameters/RequesterRole'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: role
+          description: Filtra por rol. Usar `courier` para listar repartidores.
+          schema:
+            type: string
+            enum: [admin, user, courier]
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [createdAt, firstName, lastName, email]
+            default: createdAt
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Listado obtenido correctamente.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          users:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+        '400':
+          description: El rol enviado como filtro no es valido (`INVALID_ROLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [Users]
+      summary: Registra un usuario
+      description: >
+        Alta de usuario. La contrasena se hashea con bcrypt en el Service antes de guardarse.
+        El campo `role` **solo lo puede enviar un administrador**: un registro publico crea
+        siempre un usuario con rol `user`. Para dar de alta un repartidor, mandar
+        `role: courier` con el header `x-user-role: admin`.
+      parameters:
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateInput'
+      responses:
+        '201':
+          description: Usuario creado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: Faltan campos, el email no tiene formato valido o la contrasena tiene menos de 8 caracteres (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Se envio `role` sin ser administrador (`FORBIDDEN_ROLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Ya existe un usuario con ese email (`USER_EMAIL_IN_USE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/login:
+    post:
+      tags: [Users]
+      summary: Verifica credenciales
+      description: >
+        Comprueba email y contrasena y devuelve el usuario sin el hash. **Todavia no emite
+        token ni sesion**: la autenticacion llega en un modulo posterior. Los usuarios
+        generados por el modulo de mocks comparten la contrasena `mock1234`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: grace@shipnow.com }
+                password: { type: string, format: password, example: usuario1234 }
+      responses:
+        '200':
+          description: Credenciales correctas.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: El email no tiene formato valido (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{uid}:
+    get:
+      tags: [Users]
+      summary: Obtiene un usuario por id
+      description: >
+        Accesible por el propio usuario o por un administrador. Para consultar el perfil
+        propio hay que enviar `x-user-id` con el mismo id de la ruta.
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d1 }
+        - $ref: '#/components/parameters/RequesterRole'
+        - $ref: '#/components/parameters/RequesterId'
+      responses:
+        '200':
+          description: Usuario encontrado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: El usuario no existe (`USER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags: [Users]
+      summary: Actualiza nombre, email o contrasena
+      description: >
+        Accesible por el propio usuario o por un administrador. **El rol no se cambia por esta
+        via**: si se envia `role`, la API responde 400 e indica usar `PATCH /users/{uid}/role`.
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+        - $ref: '#/components/parameters/RequesterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                firstName: { type: string }
+                lastName: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+            example:
+              firstName: Grace
+              email: grace.hopper@shipnow.com
+      responses:
+        '200':
+          description: Usuario actualizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: Datos invalidos, sin campos para actualizar, o se intento cambiar el rol (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: El usuario no existe (`USER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: El email nuevo ya esta en uso (`USER_EMAIL_IN_USE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags: [Users]
+      summary: Da de baja un usuario
+      description: >
+        Baja logica. **Requiere rol `admin`.** Regla de negocio: no se puede eliminar al
+        ultimo administrador activo del sistema.
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      responses:
+        '200':
+          description: Usuario dado de baja.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          deleted: { type: string }
+                          email: { type: string }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: El usuario no existe (`USER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Es el ultimo administrador activo (`LAST_ADMIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: LAST_ADMIN
+                  message: No se puede degradar ni eliminar al ultimo administrador
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: DELETE /api/users/68f1a2b3c4d5e6f7a8b9c0d1
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{uid}/role:
+    patch:
+      tags: [Users]
+      summary: Cambia el rol de un usuario
+      description: >
+        Unica via para modificar un rol. **Requiere rol `admin`.** No se puede degradar al
+        ultimo administrador activo. Sirve tambien para convertir a un usuario en repartidor.
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [admin, user, courier]
+                  example: courier
+      responses:
+        '200':
+          description: Rol actualizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: El rol enviado no esta entre los admitidos (`INVALID_ROLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_ROLE
+                  message: El rol enviado no es valido
+                  details:
+                    received: jefe
+                    allowed: [admin, user, courier]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: PATCH /api/users/68f1a2b3c4d5e6f7a8b9c0d1/role
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: El usuario no existe (`USER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Es el ultimo administrador activo (`LAST_ADMIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'

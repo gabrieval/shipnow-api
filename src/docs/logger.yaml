@@ -1,0 +1,100 @@
+paths:
+  /logger-test:
+    get:
+      tags: [Logger]
+      summary: Emite un log de cada nivel (herramienta interna)
+      description: >
+        **No es una funcionalidad de negocio.** Es una herramienta interna de validacion:
+        existe para comprobar de un vistazo que el sistema de logs quedo bien configurado.
+
+
+        Al llamarlo se emite un registro en cada uno de los seis niveles
+        (`debug`, `http`, `info`, `warning`, `error`, `fatal`) y se puede verificar que:
+
+
+        - En la **consola** aparecen los seis niveles en desarrollo, y solo desde `info` en produccion.
+
+        - En `logs/error-YYYY-MM-DD.log` quedan **unicamente** `error` y `fatal`.
+
+        - En `logs/combined-YYYY-MM-DD.log` queda todo desde `info` hacia arriba.
+
+
+        No recibe parametros, no modifica datos y no toca la base.
+      responses:
+        '200':
+          description: Logs emitidos.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          mensaje:
+                            type: string
+                            example: Se emitio un log de cada nivel. Revisa la consola y la carpeta de logs.
+                          entorno:
+                            type: string
+                            enum: [development, production, test]
+                            example: development
+                          nivelesEmitidos:
+                            type: array
+                            items: { type: string }
+                            example: [debug, http, info, warning, error, fatal]
+                          nivelMinimoEnConsola:
+                            type: string
+                            description: Depende de `NODE_ENV`. `debug` en desarrollo, `info` en produccion.
+                            example: debug
+                          jerarquia:
+                            type: object
+                            description: Niveles de Winston. A menor numero, mayor severidad.
+                            example:
+                              fatal: 0
+                              error: 1
+                              warning: 2
+                              info: 3
+                              http: 4
+                              debug: 5
+                          archivos:
+                            description: Donde se persisten los logs. En entorno de test no se escribe nada.
+                            example:
+                              carpeta: /ruta/al/proyecto/logs
+                              error-YYYY-MM-DD.log: solo error y fatal
+                              combined-YYYY-MM-DD.log: desde info hacia arriba
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health:
+    get:
+      tags: [Logger]
+      summary: Estado de la API (herramienta interna)
+      description: >
+        Chequeo de vida. Devuelve el entorno en el que corre la API y hace cuanto esta
+        levantada. Util para confirmar que el servidor responde antes de probar el resto.
+      responses:
+        '200':
+          description: La API responde.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          status: { type: string, example: ok }
+                          environment:
+                            type: string
+                            enum: [development, production, test]
+                            example: development
+                          uptime:
+                            type: number
+                            description: Segundos desde el arranque del proceso.
+                            example: 42.87
+        '500':
+          $ref: '#/components/responses/InternalError'

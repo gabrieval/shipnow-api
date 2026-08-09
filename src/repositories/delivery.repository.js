@@ -85,6 +85,17 @@ class DeliveryRepository {
     return this.getById(created._id);
   }
 
+  /** Actualiza campos puntuales y devuelve el documento resultante. */
+  async update(id, changes) {
+    if (!this.isValidId(id)) return null;
+    await this.model.findOneAndUpdate(this.#withBaseFilter({ _id: id }), { $set: changes }, {
+      new: true,
+      runValidators: true,
+    });
+    // Se relee con getById para devolver siempre las relaciones ya resueltas.
+    return this.getById(id);
+  }
+
   /** Insercion masiva para la carga de datos de prueba. */
   async createMany(documents = []) {
     if (documents.length === 0) return [];

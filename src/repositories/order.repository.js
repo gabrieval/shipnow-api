@@ -84,6 +84,17 @@ class OrderRepository {
     return this.getById(created._id);
   }
 
+  /** Actualiza campos puntuales y devuelve el documento resultante. */
+  async update(id, changes) {
+    if (!this.isValidId(id)) return null;
+    await this.model.findOneAndUpdate(this.#withBaseFilter({ _id: id }), { $set: changes }, {
+      new: true,
+      runValidators: true,
+    });
+    // Se relee con getById para devolver siempre las relaciones ya resueltas.
+    return this.getById(id);
+  }
+
   /**
    * Insercion masiva para la carga de datos de prueba.
    * `ordered: false` deja que el lote siga aunque un documento choque contra un

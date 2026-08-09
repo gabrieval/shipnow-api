@@ -1,0 +1,197 @@
+paths:
+  /orders:
+    get:
+      tags: [Orders]
+      summary: Lista pedidos
+      description: >
+        Listado paginado de pedidos activos, con el usuario dueno ya resuelto.
+        Devuelve ademas cuanto facturan los pedidos listados.
+
+
+        Los pedidos se generan hoy desde el modulo de mocks
+        (`POST /mocks/generateData`): la API expone su consulta y el avance de estado.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: status
+          description: Filtra por estado del pedido.
+          schema:
+            type: string
+            enum: [pending, confirmed, preparing, shipped, delivered, cancelled]
+        - in: query
+          name: priority
+          description: Filtra por prioridad de despacho.
+          schema:
+            type: string
+            enum: [low, normal, high, urgent]
+        - in: query
+          name: user
+          description: Id del usuario dueno de los pedidos.
+          schema: { type: string }
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [createdAt, total, status, priority]
+            default: createdAt
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Listado obtenido correctamente.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          orders:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Order'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+                          summary:
+                            type: object
+                            properties:
+                              billedAmount: { type: number, example: 8421.5 }
+        '400':
+          description: Estado o prioridad fuera de los valores admitidos (`INVALID_ORDER_STATUS`, `INVALID_ORDER_PRIORITY`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_ORDER_STATUS
+                  message: El estado de pedido enviado no es valido
+                  details:
+                    received: entregadisimo
+                    allowed: [pending, confirmed, preparing, shipped, delivered, cancelled]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/orders?status=entregadisimo
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /orders/{oid}:
+    get:
+      tags: [Orders]
+      summary: Obtiene un pedido por id
+      description: Devuelve el pedido con sus items y el usuario dueno resuelto.
+      parameters:
+        - in: path
+          name: oid
+          required: true
+          description: Id del pedido.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d3 }
+      responses:
+        '200':
+          description: Pedido encontrado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Order'
+        '404':
+          description: El pedido no existe (`ORDER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: ORDER_NOT_FOUND
+                  message: El pedido solicitado no existe
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/orders/64b7f1f1f1f1f1f1f1f1f1f1
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /orders/{oid}/status:
+    patch:
+      tags: [Orders]
+      summary: Avanza el estado de un pedido
+      description: >
+        Cambia el estado del pedido. **Requiere rol `admin`.**
+
+
+        No cualquier salto es valido: el pedido avanza por transiciones permitidas y
+        `delivered` y `cancelled` son estados terminales que no admiten mas cambios.
+
+
+        | Estado actual | Puede pasar a |
+        | --- | --- |
+        | `pending` | `confirmed`, `cancelled` |
+        | `confirmed` | `preparing`, `cancelled` |
+        | `preparing` | `shipped`, `cancelled` |
+        | `shipped` | `delivered`, `cancelled` |
+        | `delivered` | (ninguno) |
+        | `cancelled` | (ninguno) |
+      parameters:
+        - in: path
+          name: oid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending, confirmed, preparing, shipped, delivered, cancelled]
+                  example: confirmed
+      responses:
+        '200':
+          description: Estado actualizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Order'
+        '400':
+          description: >
+            El estado no existe, falta el campo `status`, o la transicion desde el estado actual
+            no esta permitida (`INVALID_ORDER_STATUS`, `VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_ORDER_STATUS
+                  message: El estado de pedido enviado no es valido
+                  details:
+                    received: delivered
+                    allowed: [confirmed, cancelled]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: PATCH /api/orders/68f1a2b3c4d5e6f7a8b9c0d3/status
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: El pedido no existe (`ORDER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'

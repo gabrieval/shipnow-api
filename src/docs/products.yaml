@@ -1,0 +1,311 @@
+paths:
+  /products:
+    get:
+      tags: [Products]
+      summary: Lista el catalogo
+      description: >
+        Listado paginado de productos activos. Devuelve ademas el valor total del inventario
+        listado (suma de `precio x stock`), que calcula el Service.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [electronics, clothing, home, sports, other]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [available, out_of_stock, discontinued]
+        - in: query
+          name: available
+          description: Si es `true`, deja solo productos disponibles y con stock mayor a 0.
+          schema: { type: boolean }
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [createdAt, price, stock, title]
+            default: createdAt
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Listado obtenido correctamente.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          products:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Product'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+                          summary:
+                            type: object
+                            properties:
+                              inventoryValue: { type: number, example: 12450.75 }
+        '400':
+          description: Categoria o estado fuera de los valores admitidos (`INVALID_PRODUCT_CATEGORY`, `INVALID_PRODUCT_STATUS`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_PRODUCT_CATEGORY
+                  message: La categoria enviada no es valida
+                  details:
+                    received: naves
+                    allowed: [electronics, clothing, home, sports, other]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/products?category=naves
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [Products]
+      summary: Crea un producto
+      description: >
+        Alta de producto. **Requiere rol `admin`.** El `status` no se envia: lo deriva el Service
+        a partir del stock. El `code` se normaliza a mayusculas y debe ser unico.
+      parameters:
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreateInput'
+      responses:
+        '201':
+          description: Producto creado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /products/available:
+    get:
+      tags: [Products]
+      summary: Lista solo los productos con stock
+      description: Atajo de catalogo publico. Equivale a `GET /products?available=true`.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Listado de productos disponibles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /products/{pid}:
+    get:
+      tags: [Products]
+      summary: Obtiene un producto por id
+      parameters:
+        - in: path
+          name: pid
+          required: true
+          description: Id del producto.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d2 }
+      responses:
+        '200':
+          description: Producto encontrado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags: [Products]
+      summary: Actualiza un producto
+      description: >
+        Actualizacion parcial. **Requiere rol `admin`.** Si cambia el `stock` y no se envia un
+        `status` explicito, el estado se recalcula solo.
+      parameters:
+        - in: path
+          name: pid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                description: { type: string }
+                code: { type: string }
+                price: { type: number, minimum: 0 }
+                stock: { type: integer, minimum: 0 }
+                category:
+                  type: string
+                  enum: [electronics, clothing, home, sports, other]
+                status:
+                  type: string
+                  enum: [available, out_of_stock, discontinued]
+                thumbnails:
+                  type: array
+                  items: { type: string }
+            example:
+              price: 799.99
+              stock: 20
+      responses:
+        '200':
+          description: Producto actualizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags: [Products]
+      summary: Da de baja un producto
+      description: >
+        Baja logica: el documento queda en la base pero sale de todas las consultas.
+        **Requiere rol `admin`.**
+      parameters:
+        - in: path
+          name: pid
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      responses:
+        '200':
+          description: Producto dado de baja.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          deleted: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d2 }
+                          code: { type: string, example: SN-NB-001 }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /products/{pid}/stock:
+    patch:
+      tags: [Products]
+      summary: Descuenta stock de un producto
+      description: >
+        Descuento atomico de stock, pensado para una compra. La condicion
+        `stock >= cantidad` viaja dentro del update, asi dos pedidos simultaneos no dejan
+        el stock en negativo. Si el producto queda en 0, su estado pasa a `out_of_stock`.
+      parameters:
+        - in: path
+          name: pid
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  description: Unidades a descontar. Entero mayor a 0.
+                  example: 2
+      responses:
+        '200':
+          description: Stock descontado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Product'
+        '400':
+          description: La cantidad no es un entero mayor a 0 (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: No hay stock suficiente (`INSUFFICIENT_STOCK`) o el producto esta discontinuado (`PRODUCT_DISCONTINUED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INSUFFICIENT_STOCK
+                  message: Stock insuficiente para completar la operacion
+                  details:
+                    requested: 99
+                    available: 2
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: PATCH /api/products/68f1a2b3c4d5e6f7a8b9c0d2/stock
+        '500':
+          $ref: '#/components/responses/InternalError'

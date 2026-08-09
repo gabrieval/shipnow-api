@@ -1,0 +1,519 @@
+paths:
+  /mocks/users:
+    get:
+      tags: [Mocks]
+      summary: Genera usuarios simulados (no los guarda)
+      description: >
+        Devuelve usuarios con la misma forma que el modelo real y roles validos
+        (`admin` o `user`), **sin escribir nada en MongoDB**.
+
+
+        La contrasena no viaja en la respuesta, igual que en cualquier endpoint real de la API.
+      parameters:
+        - in: query
+          name: count
+          description: Cantidad a generar. Entero entre 1 y 200.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 10
+      responses:
+        '200':
+          description: Usuarios generados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          count: { type: integer, example: 10 }
+                          users:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/couriers:
+    get:
+      tags: [Mocks]
+      summary: Genera repartidores simulados (no los guarda)
+      description: Igual que `/mocks/users`, pero todos con rol `courier` fijo, nunca al azar.
+      parameters:
+        - in: query
+          name: count
+          schema: { type: integer, minimum: 1, maximum: 200, default: 10 }
+      responses:
+        '200':
+          description: Repartidores generados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          couriers:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/products:
+    get:
+      tags: [Mocks]
+      summary: Genera productos simulados (no los guarda)
+      description: El `status` de cada producto se deriva del stock, con la misma regla que usa el ProductService.
+      parameters:
+        - in: query
+          name: count
+          schema: { type: integer, minimum: 1, maximum: 200, default: 10 }
+      responses:
+        '200':
+          description: Productos generados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          products:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/orders:
+    get:
+      tags: [Mocks]
+      summary: Genera pedidos simulados (no los guarda)
+      description: >
+        Devuelve pedidos con estados y prioridades validos, items con subtotales y total
+        calculado.
+
+
+        Como un pedido no existe sin usuario ni productos, se generan usuarios y productos
+        **efimeros** para sostener la relacion: los `_id` que aparecen en `user` y en
+        `items[].product` no existen en la base.
+      parameters:
+        - in: query
+          name: count
+          schema: { type: integer, minimum: 1, maximum: 200, default: 10 }
+      responses:
+        '200':
+          description: Pedidos generados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          orders:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/deliveries:
+    get:
+      tags: [Mocks]
+      summary: Genera entregas simuladas (no las guarda)
+      description: >
+        Cada entrega se asocia a un pedido efimero y, cuando su estado lo exige, a un
+        repartidor con rol `courier`. El estado de la entrega es siempre compatible con el
+        estado del pedido: no se generan combinaciones imposibles como pedido `pending` con
+        entrega `delivered`.
+      parameters:
+        - in: query
+          name: count
+          schema: { type: integer, minimum: 1, maximum: 200, default: 10 }
+      responses:
+        '200':
+          description: Entregas generadas.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          deliveries:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Delivery'
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/dataset:
+    get:
+      tags: [Mocks]
+      summary: Genera un set completo y relacionado (no lo guarda)
+      description: >
+        Devuelve usuarios, repartidores, productos, pedidos y entregas relacionados entre si
+        en una sola llamada, mas un resumen de como quedaron las relaciones. Util para revisar
+        la coherencia antes de escribir nada en la base.
+
+
+        Se genera una entrega por pedido (relacion 1 a 1). Si se piden 0 usuarios o 0 productos,
+        no se generan pedidos ni entregas.
+      parameters:
+        - in: query
+          name: users
+          schema: { type: integer, minimum: 0, maximum: 200, default: 5 }
+        - in: query
+          name: couriers
+          schema: { type: integer, minimum: 0, maximum: 200, default: 3 }
+        - in: query
+          name: products
+          schema: { type: integer, minimum: 0, maximum: 200, default: 10 }
+        - in: query
+          name: orders
+          schema: { type: integer, minimum: 0, maximum: 200, default: 5 }
+      responses:
+        '200':
+          description: Dataset generado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          users:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+                          couriers:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/User'
+                          products:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Product'
+                          orders:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Order'
+                          deliveries:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Delivery'
+                          relations:
+                            type: object
+                            properties:
+                              ordersPerUser: { type: number, example: 1.2 }
+                              deliveriesWithCourier: { type: integer, example: 4 }
+                              deliveriesPendingAssignment: { type: integer, example: 2 }
+                              couriersAvailable: { type: integer, example: 3 }
+        '400':
+          $ref: '#/components/responses/InvalidMockCount'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/summary:
+    get:
+      tags: [Mocks]
+      summary: Cuenta los datos de prueba que hay en la base
+      description: >
+        Cuenta por entidad los documentos marcados con `isMock: true`. Sirve para confirmar
+        que los endpoints `GET` de este modulo **no** persisten nada.
+      responses:
+        '200':
+          description: Conteo actual.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          users: { type: integer, example: 6 }
+                          couriers: { type: integer, example: 3 }
+                          products: { type: integer, example: 10 }
+                          orders: { type: integer, example: 8 }
+                          deliveries: { type: integer, example: 8 }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /mocks/generateData:
+    post:
+      tags: [Mocks]
+      summary: Inserta datos de prueba en MongoDB
+      description: >
+        Genera un lote relacionado y **lo escribe en la base**. **Requiere rol `admin`.**
+
+
+        Todos los campos del body son opcionales; si falta alguno se usa su valor por defecto.
+        Todo lo insertado queda marcado con `isMock: true`, que es lo que permite despues
+        limpiarlo sin tocar datos reales.
+
+
+        Reglas de la carga:
+
+
+        - Se valida que el lote sea armable **antes** de escribir nada, para no dejar cargas a medias.
+
+        - Si se piden pedidos con `users: 0` o `products: 0`, se reutilizan los que ya estan en la base;
+          si no hay ninguno, responde 400.
+
+        - Las entregas se crean 1 a 1 contra los pedidos del mismo lote.
+
+        - Todos los usuarios simulados comparten la contrasena `mock1234`, hasheada con bcrypt.
+      parameters:
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                users:
+                  type: integer
+                  minimum: 0
+                  maximum: 200
+                  default: 5
+                  description: Usuarios con rol `user` a crear.
+                couriers:
+                  type: integer
+                  minimum: 0
+                  maximum: 200
+                  default: 3
+                  description: Usuarios con rol `courier` a crear.
+                products:
+                  type: integer
+                  minimum: 0
+                  maximum: 200
+                  default: 10
+                orders:
+                  type: integer
+                  minimum: 0
+                  maximum: 200
+                  default: 5
+                deliveries:
+                  type: integer
+                  minimum: 0
+                  maximum: 200
+                  description: Por defecto, una por cada pedido creado.
+            example:
+              users: 10
+              couriers: 4
+              products: 20
+              orders: 15
+              deliveries: 15
+      responses:
+        '201':
+          description: Datos insertados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          inserted:
+                            type: object
+                            properties:
+                              users: { type: integer, example: 10 }
+                              couriers: { type: integer, example: 4 }
+                              products: { type: integer, example: 20 }
+                              orders: { type: integer, example: 15 }
+                              deliveries: { type: integer, example: 15 }
+                          credentials:
+                            type: object
+                            properties:
+                              note: { type: string, example: Todos los usuarios simulados comparten la misma contrasena }
+                              password: { type: string, example: mock1234 }
+                              sampleEmail: { type: string, example: ana.perez.0k3fa@shipnow.dev }
+                          relations:
+                            type: object
+                            properties:
+                              ordersPerUser: { type: number }
+                              deliveriesWithCourier: { type: integer }
+                              deliveriesPendingAssignment: { type: integer }
+                              couriersAvailable: { type: integer }
+        '400':
+          description: >
+            Cantidad invalida (`INVALID_MOCK_COUNT`), o el lote no se puede armar porque faltan
+            usuarios (`MOCK_MISSING_USERS`), productos (`MOCK_MISSING_PRODUCTS`) o pedidos
+            (`MOCK_MISSING_ORDERS`) con los que relacionar lo pedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                cantidadNegativa:
+                  summary: Cantidad negativa
+                  value:
+                    status: error
+                    error:
+                      code: INVALID_MOCK_COUNT
+                      message: 'El parametro "users" no es una cantidad valida: no puede ser negativo'
+                      details: { field: users, received: -3, min: 0, max: 200 }
+                    timestamp: '2026-08-09T11:15:13.713Z'
+                    path: POST /api/mocks/generateData
+                faltanUsuarios:
+                  summary: Se pidieron pedidos pero no hay usuarios
+                  value:
+                    status: error
+                    error:
+                      code: MOCK_MISSING_USERS
+                      message: No hay usuarios disponibles para asociar a los pedidos
+                      details:
+                        sugerencia: Envia users > 0 en el body o carga usuarios antes de generar pedidos
+                    timestamp: '2026-08-09T11:15:13.713Z'
+                    path: POST /api/mocks/generateData
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Los datos generados violan una relacion del dominio (`MOCK_INCOHERENT_DATA`). Se corta antes de insertar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Fallo la escritura en MongoDB (`MOCK_PERSISTENCE_ERROR`). El error indica que entidad fallo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: MOCK_PERSISTENCE_ERROR
+                  message: Fallo la carga de datos de prueba al insertar "products"
+                  details:
+                    entity: products
+                    reason: 'E11000 duplicate key error collection: shipnow.products'
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: POST /api/mocks/generateData
+
+  /mocks:
+    delete:
+      tags: [Mocks]
+      summary: Borra los datos de prueba
+      description: >
+        Elimina **solo** los documentos marcados con `isMock: true`. **Requiere rol `admin`.**
+        Un usuario o un producto cargado a mano, o por `npm run seed`, no se toca.
+
+
+        El borrado va en orden inverso al de creacion, para no dejar entregas apuntando a
+        pedidos que ya no existen.
+      parameters:
+        - $ref: '#/components/parameters/RequesterRole'
+      responses:
+        '200':
+          description: Datos de prueba eliminados.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          deleted:
+                            type: object
+                            properties:
+                              deliveries: { type: integer, example: 8 }
+                              orders: { type: integer, example: 8 }
+                              products: { type: integer, example: 10 }
+                              users: { type: integer, example: 9 }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: Fallo el borrado en MongoDB (`MOCK_PERSISTENCE_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  responses:
+    InvalidMockCount:
+      description: >
+        La cantidad pedida no es valida (`INVALID_MOCK_COUNT`). El mensaje indica el motivo:
+        negativa, decimal, no numerica, cero donde no corresponde, o por encima del maximo de 200.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            negativa:
+              summary: count negativo
+              value:
+                status: error
+                error:
+                  code: INVALID_MOCK_COUNT
+                  message: 'El parametro "count" no es una cantidad valida: no puede ser negativo'
+                  details: { field: count, received: -5, min: 1, max: 200 }
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/mocks/users?count=-5
+            decimal:
+              summary: count decimal
+              value:
+                status: error
+                error:
+                  code: INVALID_MOCK_COUNT
+                  message: 'El parametro "count" no es una cantidad valida: tiene que ser un entero, no un decimal'
+                  details: { field: count, received: 2.5, min: 1, max: 200 }
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/mocks/users?count=2.5
+            fueraDeRango:
+              summary: count por encima del maximo
+              value:
+                status: error
+                error:
+                  code: INVALID_MOCK_COUNT
+                  message: 'El parametro "count" no es una cantidad valida: supera el maximo permitido de 200'
+                  details: { field: count, received: 9999, min: 1, max: 200 }
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/mocks/users?count=9999

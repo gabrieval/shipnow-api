@@ -1,0 +1,414 @@
+# Schemas reutilizables y respuestas comunes.
+# Todo lo que se repite en mas de un endpoint vive aca y se referencia con $ref.
+
+components:
+  parameters:
+    RequesterRole:
+      in: header
+      name: x-user-role
+      description: >
+        Rol simulado de quien ejecuta la peticion, hasta que se incorpore la autenticacion.
+        Si no se envia, la API asume `user`.
+      required: false
+      schema:
+        type: string
+        enum: [admin, user, courier]
+        example: admin
+    RequesterId:
+      in: header
+      name: x-user-id
+      description: Id del usuario que ejecuta la peticion. Solo hace falta para operar sobre el perfil propio.
+      required: false
+      schema:
+        type: string
+        example: 68f1a2b3c4d5e6f7a8b9c0d1
+    Page:
+      in: query
+      name: page
+      description: Numero de pagina, empezando en 1.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      in: query
+      name: limit
+      description: Cantidad de documentos por pagina. El maximo es 100.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+    Order:
+      in: query
+      name: order
+      description: Direccion del ordenamiento.
+      required: false
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+
+  schemas:
+    # ------------------------------------------------------------------
+    # Envolturas de respuesta
+    # ------------------------------------------------------------------
+    SuccessResponse:
+      type: object
+      description: Forma de toda respuesta exitosa de la API.
+      required: [status, payload]
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: success
+        payload:
+          description: Contenido de la respuesta. Su forma depende del endpoint.
+          oneOf:
+            - type: object
+            - type: array
+              items: {}
+
+    ErrorResponse:
+      type: object
+      description: >
+        Forma de TODA respuesta de error de la API. La emite unicamente el middleware global:
+        ningun controller arma errores por su cuenta.
+      required: [status, error, timestamp, path]
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Identificador estable del error. Es lo que conviene leer desde el cliente, no el texto.
+              example: PRODUCT_NOT_FOUND
+            message:
+              type: string
+              description: Descripcion legible del problema.
+              example: El producto solicitado no existe
+            details:
+              description: Contexto opcional; campos invalidos, valor recibido o valores admitidos.
+              example:
+                received: naves
+                allowed: [electronics, clothing, home, sports, other]
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-08-09T11:15:13.713Z'
+        path:
+          type: string
+          description: Metodo y URL que provocaron el error.
+          example: GET /api/products/64b7f1f1f1f1f1f1f1f1f1f1
+
+    Pagination:
+      type: object
+      properties:
+        total: { type: integer, example: 42 }
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        totalPages: { type: integer, example: 5 }
+        hasPrevPage: { type: boolean, example: false }
+        hasNextPage: { type: boolean, example: true }
+
+    # ------------------------------------------------------------------
+    # Entidades
+    # ------------------------------------------------------------------
+    User:
+      type: object
+      description: Usuario de ShipNow. El hash de la contrasena nunca se devuelve.
+      properties:
+        _id: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d1 }
+        firstName: { type: string, example: Grace }
+        lastName: { type: string, example: Hopper }
+        fullName:
+          type: string
+          description: Campo derivado, se arma en el Service y no se persiste.
+          example: Grace Hopper
+        email: { type: string, format: email, example: grace@shipnow.com }
+        role:
+          type: string
+          description: '`courier` identifica a un repartidor: no es una entidad aparte.'
+          enum: [admin, user, courier]
+          example: user
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    UserCreateInput:
+      type: object
+      required: [firstName, lastName, email, password]
+      properties:
+        firstName: { type: string, example: Grace }
+        lastName: { type: string, example: Hopper }
+        email: { type: string, format: email, example: grace@shipnow.com }
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: usuario1234
+        role:
+          type: string
+          description: Solo un administrador puede elegir el rol. Un registro publico siempre crea un `user`.
+          enum: [admin, user, courier]
+
+    Product:
+      type: object
+      properties:
+        _id: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d2 }
+        title: { type: string, example: Notebook 14 pulgadas }
+        description: { type: string, example: Notebook liviana con 16GB de RAM }
+        code:
+          type: string
+          description: Codigo unico de catalogo. Se normaliza a mayusculas.
+          example: SN-NB-001
+        price: { type: number, format: float, example: 899.99 }
+        stock: { type: integer, example: 12 }
+        category:
+          type: string
+          enum: [electronics, clothing, home, sports, other]
+          example: electronics
+        status:
+          type: string
+          description: Se deriva del stock, salvo `discontinued`, que es una decision manual.
+          enum: [available, out_of_stock, discontinued]
+          example: available
+        thumbnails:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProductCreateInput:
+      type: object
+      required: [title, description, code, price]
+      properties:
+        title: { type: string, example: Notebook 14 pulgadas }
+        description: { type: string, example: Notebook liviana con 16GB de RAM }
+        code: { type: string, example: SN-NB-001 }
+        price: { type: number, minimum: 0, example: 899.99 }
+        stock: { type: integer, minimum: 0, default: 0, example: 12 }
+        category:
+          type: string
+          enum: [electronics, clothing, home, sports, other]
+          default: other
+        thumbnails:
+          type: array
+          items: { type: string }
+
+    OrderItem:
+      type: object
+      description: Linea de un pedido. Guarda el precio al momento de la compra, no el actual.
+      properties:
+        product:
+          type: string
+          description: Id del producto referenciado.
+          example: 68f1a2b3c4d5e6f7a8b9c0d2
+        title: { type: string, example: Notebook 14 pulgadas }
+        quantity: { type: integer, minimum: 1, example: 2 }
+        unitPrice: { type: number, format: float, example: 899.99 }
+        subtotal:
+          type: number
+          format: float
+          description: '`unitPrice` x `quantity`. Lo calcula el Service.'
+          example: 1799.98
+
+    ShippingAddress:
+      type: object
+      properties:
+        street: { type: string, example: Av. Siempre Viva 742 }
+        city: { type: string, example: Rosario }
+        state: { type: string, example: Santa Fe }
+        zipCode: { type: string, example: S2000 }
+        country: { type: string, example: Argentina }
+
+    Order:
+      type: object
+      description: Pedido de un usuario. La relacion pedido -> usuario es obligatoria.
+      properties:
+        _id: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d3 }
+        code: { type: string, example: ORD-0001-A7B2C }
+        user:
+          description: Usuario dueno del pedido, ya resuelto por el repositorio.
+          allOf:
+            - $ref: '#/components/schemas/User'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total:
+          type: number
+          format: float
+          description: Suma de los subtotales. Lo recalcula el Service, nunca llega del cliente.
+          example: 1799.98
+        status:
+          type: string
+          enum: [pending, confirmed, preparing, shipped, delivered, cancelled]
+          example: pending
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+          example: normal
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddress'
+        notes: { type: string, example: Tocar timbre dos veces }
+        isMock:
+          type: boolean
+          description: Marca los documentos creados por el modulo de mocking.
+          example: true
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Delivery:
+      type: object
+      description: >
+        Entrega de un pedido. La relacion entrega -> pedido es 1 a 1.
+        El repartidor es un usuario con rol `courier` y puede no estar asignado todavia.
+      properties:
+        _id: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d4 }
+        trackingCode: { type: string, example: TRK-0001-9F3A2B }
+        order:
+          description: Pedido al que pertenece la entrega.
+          allOf:
+            - $ref: '#/components/schemas/Order'
+        courier:
+          nullable: true
+          description: Repartidor asignado, o `null` si esta pendiente de asignacion.
+          allOf:
+            - $ref: '#/components/schemas/User'
+        status:
+          type: string
+          enum: [pending_assignment, assigned, in_transit, delivered, failed, returned]
+          example: assigned
+        estimatedDate: { type: string, format: date-time }
+        assignedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Solo tiene valor si hay repartidor asignado.
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Solo tiene valor si el estado es `delivered`.
+        attempts: { type: integer, example: 0 }
+        isMock: { type: boolean, example: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+  # --------------------------------------------------------------------
+  # Respuestas de error reutilizables.
+  # Cada una corresponde a un codigo real del diccionario de errores.
+  # --------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: Datos invalidos. `error.code` puede ser `VALIDATION_ERROR` o un codigo mas especifico.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: VALIDATION_ERROR
+              message: 'Faltan campos obligatorios: description, code, price'
+              details:
+                - field: description
+                  message: Es obligatorio
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/products
+
+    Unauthorized:
+      description: Credenciales invalidas.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: INVALID_CREDENTIALS
+              message: Email o contrasena incorrectos
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/users/login
+
+    Forbidden:
+      description: El rol de quien pide no alcanza para esta accion.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: FORBIDDEN_ROLE
+              message: No tenes permisos para realizar esta accion
+              details:
+                requiredRole: admin
+                receivedRole: user
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/products
+
+    NotFound:
+      description: El recurso solicitado no existe.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: PRODUCT_NOT_FOUND
+              message: El producto solicitado no existe
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: GET /api/products/64b7f1f1f1f1f1f1f1f1f1f1
+
+    Conflict:
+      description: La operacion choca con el estado actual de los datos.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: PRODUCT_CODE_IN_USE
+              message: Ya existe un producto con ese codigo
+              details:
+                code: SN-NB-001
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/products
+
+    UnprocessableEntity:
+      description: Los datos no pasan la validacion del esquema o son incoherentes entre si.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: SCHEMA_VALIDATION_ERROR
+              message: Los datos no cumplen con el esquema esperado
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/products
+
+    InternalError:
+      description: Fallo inesperado del servidor. Queda registrado en `logs/error-YYYY-MM-DD.log`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: INTERNAL_ERROR
+              message: Error interno del servidor
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: GET /api/products
