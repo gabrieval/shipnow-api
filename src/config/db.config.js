@@ -3,24 +3,32 @@
  * Toma la URI del objeto de configuracion validado, nunca de process.env.
  */
 const mongoose = require('mongoose');
-const { mongodbUri, isProduction } = require('./env.config');
+const { mongodbUri } = require('./env.config');
+const { logger } = require('./logger.config');
 
 mongoose.set('strictQuery', true);
 
 async function connectDB() {
   try {
     await mongoose.connect(mongodbUri, { serverSelectionTimeoutMS: 10000 });
-    console.log(`[db] Conectado a MongoDB -> base "${mongoose.connection.name}"`);
+    logger.info('Conexion a MongoDB establecida', { base: mongoose.connection.name });
     return mongoose.connection;
   } catch (error) {
-    // Mensaje explicito: la causa mas comun es una URI mal escrita o Mongo apagado.
+    // No poder conectar a la base al arrancar es una falla critica: sin base no
+    // hay API que valga. Se loguea como `fatal` antes de propagar.
+    logger.fatal('No se pudo conectar a MongoDB', { motivo: error.message });
     throw new Error(`[db] No se pudo conectar a MongoDB. Detalle: ${error.message}`);
   }
 }
 
+// Perdida de conexion despues del arranque: la app sigue viva pero degradada.
+mongoose.connection.on('disconnected', () => logger.warning('Se perdio la conexion con MongoDB'));
+mongoose.connection.on('reconnected', () => logger.info('Se restablecio la conexion con MongoDB'));
+mongoose.connection.on('error', (error) => logger.error('Error de la conexion con MongoDB', { motivo: error.message }));
+
 async function disconnectDB() {
   await mongoose.disconnect();
-  if (!isProduction) console.log('[db] Conexion cerrada');
+  logger.info('Conexion con MongoDB cerrada');
 }
 
 module.exports = { connectDB, disconnectDB };

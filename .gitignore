@@ -5,8 +5,12 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-logs/
+# Logs generados por la aplicacion: la carpeta se versiona (con su README),
+# los archivos que produce Winston no.
+logs/*
+!logs/README.md
 *.log
+*.log.gz
 .DS_Store
 Thumbs.db
 .vscode/

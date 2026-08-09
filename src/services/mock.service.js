@@ -32,7 +32,7 @@ const {
   MockPersistenceError,
 } = require('../errors');
 const { USER_ROLES, MOCK_LIMITS, DELIVERY_STATUS_REQUIRING_COURIER } = require('../constants');
-const { config } = require('../config');
+const { config, logger } = require('../config');
 
 class MockService {
   constructor({
@@ -64,6 +64,8 @@ class MockService {
 
     const min = allowZero ? 0 : 1;
     const fail = (reason, received = value) => {
+      // Se deja rastro del parametro rechazado: es el error mas comun de este modulo.
+      logger.warning('Cantidad invalida enviada al modulo de mocks', { campo: label, recibido: received, motivo: reason });
       throw new InvalidMockCountError({ field: label, received, min, max: MOCK_LIMITS.MAX_COUNT, reason });
     };
 
@@ -92,6 +94,7 @@ class MockService {
     try {
       return await operation();
     } catch (cause) {
+      logger.error('Fallo la escritura de datos de prueba en MongoDB', { entidad: entity, motivo: cause.message });
       throw new MockPersistenceError({ entity, cause });
     }
   }
@@ -318,14 +321,18 @@ class MockService {
       );
     }
 
+    const inserted = {
+      users: insertedUsers.length,
+      couriers: insertedCouriers.length,
+      products: insertedProducts.length,
+      orders: insertedOrders.length,
+      deliveries: insertedDeliveries.length,
+    };
+
+    logger.info('Datos de prueba generados y cargados en MongoDB', inserted);
+
     return {
-      inserted: {
-        users: insertedUsers.length,
-        couriers: insertedCouriers.length,
-        products: insertedProducts.length,
-        orders: insertedOrders.length,
-        deliveries: insertedDeliveries.length,
-      },
+      inserted,
       credentials: {
         note: 'Todos los usuarios simulados comparten la misma contrasena',
         password: MOCK_LIMITS.DEFAULT_PASSWORD,
@@ -434,12 +441,17 @@ class MockService {
     this.#assertCanPersist(requesterRole);
 
     // Orden inverso al de creacion, para no dejar entregas apuntando a pedidos borrados.
+    logger.info('Iniciando limpieza de datos de prueba');
+
     const deliveries = await this.#persist('deliveries', () => this.deliveryRepository.deleteMocks());
     const orders = await this.#persist('orders', () => this.orderRepository.deleteMocks());
     const products = await this.#persist('products', () => this.productRepository.deleteMocks());
     const users = await this.#persist('users', () => this.userRepository.deleteMocks());
 
-    return { deleted: { deliveries, orders, products, users } };
+    const deleted = { deliveries, orders, products, users };
+    logger.info('Datos de prueba eliminados', deleted);
+
+    return { deleted };
   }
 }
 

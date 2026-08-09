@@ -21,7 +21,7 @@ const {
   InvalidProductCategoryError,
 } = require('../errors');
 const { PRODUCT_STATUS, PRODUCT_CATEGORIES, USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
-const { config } = require('../config');
+const { config, logger } = require('../config');
 
 /** Campos que el cliente puede enviar. Cualquier otro se descarta. */
 const CREATABLE_FIELDS = ['title', 'description', 'code', 'price', 'stock', 'category', 'thumbnails'];
@@ -197,7 +197,10 @@ class ProductService {
 
     data.status = this.#resolveStatus(data.stock);
 
-    return this.repository.create(data);
+    const created = await this.repository.create(data);
+    logger.info('Producto creado', { id: String(created._id), code: created.code, status: created.status });
+
+    return created;
   }
 
   /** Actualizacion parcial. El estado se recalcula si cambia el stock. */
@@ -278,6 +281,9 @@ class ProductService {
     // El update atomico devuelve null si el filtro `stock >= amount` no se cumplio.
     if (!updated) throw new InsufficientStockError({ requested: amount, available: product.stock });
 
+    logger.debug('Stock descontado', { code: updated.code, descontado: amount, restante: updated.stock });
+    if (updated.stock === 0) logger.warning('Producto sin stock disponible', { code: updated.code });
+
     // Tras descontar, el estado puede haber cambiado a sin stock.
     const nextStatus = this.#resolveStatus(updated.stock, updated.status);
     if (nextStatus !== updated.status) {
@@ -293,6 +299,8 @@ class ProductService {
 
     const deleted = await this.repository.softDelete(id);
     if (!deleted) throw new ProductNotFoundError(id);
+
+    logger.info('Producto dado de baja', { id: String(id), code: deleted.code });
     return deleted;
   }
 }
