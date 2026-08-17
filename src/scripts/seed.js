@@ -5,7 +5,7 @@
  *
  * Uso: npm run seed
  */
-const { connectDB, disconnectDB } = require('../config');
+const { connectDB, disconnectDB, logger } = require('../config');
 const productService = require('../services/product.service');
 const userService = require('../services/user.service');
 const { USER_ROLES, PRODUCT_CATEGORIES } = require('../constants');
@@ -68,18 +68,18 @@ async function seed() {
   for (const user of USERS) {
     try {
       await userService.create(user, USER_ROLES.ADMIN);
-      console.log(`[seed] usuario creado: ${user.email} (${user.role})`);
+      logger.info('Seed: usuario creado', { email: user.email, rol: user.role });
     } catch (error) {
-      console.log(`[seed] usuario omitido: ${user.email} -> ${error.message}`);
+      logger.warning('Seed: usuario omitido', { email: user.email, motivo: error.message });
     }
   }
 
   for (const product of PRODUCTS) {
     try {
       const created = await productService.create(product, USER_ROLES.ADMIN);
-      console.log(`[seed] producto creado: ${created.code} (${created.status})`);
+      logger.info('Seed: producto creado', { code: created.code, status: created.status });
     } catch (error) {
-      console.log(`[seed] producto omitido: ${product.code} -> ${error.message}`);
+      logger.warning('Seed: producto omitido', { code: product.code, motivo: error.message });
     }
   }
 
@@ -87,7 +87,7 @@ async function seed() {
 }
 
 seed().catch(async (error) => {
-  console.error('[seed] fallo la carga inicial:', error.message);
+  logger.fatal('Seed: fallo la carga inicial', { motivo: error.message });
   await disconnectDB().catch(() => {});
   process.exit(1);
 });

@@ -3,21 +3,21 @@
  * de eso se ocupa `server.js`. Separarlo deja la app lista para testear.
  */
 const express = require('express');
-const morgan = require('morgan');
 
 const apiRoutes = require('./routes');
 const attachRequester = require('./middlewares/requester.middleware');
+const httpLogger = require('./middlewares/http.middleware');
 const { errorHandler, notFoundHandler } = require('./middlewares/error.middleware');
-const { config } = require('./config');
 
 function createApp() {
   const app = express();
 
-  if (!config.isTest) app.use(morgan('dev'));
-
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+
+  // Primero se resuelve quien pide, para que el log de la request lo incluya.
   app.use(attachRequester);
+  app.use(httpLogger);
 
   app.use('/api', apiRoutes);
 

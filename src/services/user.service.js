@@ -17,7 +17,7 @@ const {
   LastAdminError,
 } = require('../errors');
 const { USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
-const { config } = require('../config');
+const { config, logger } = require('../config');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MIN_PASSWORD_LENGTH = 8;
@@ -167,6 +167,8 @@ class UserService {
       role: finalRole,
     });
 
+    logger.info('Usuario registrado', { id: String(created._id), email: created.email, rol: created.role });
+
     return this.#withFullName(created);
   }
 
@@ -228,6 +230,8 @@ class UserService {
     if (newRole !== USER_ROLES.ADMIN) await this.#assertIsNotLastAdmin(user);
 
     const updated = await this.repository.update(id, { role: newRole });
+    logger.warning('Rol de usuario modificado', { id: String(id), rolAnterior: user.role, rolNuevo: newRole });
+
     return this.#withFullName(updated);
   }
 

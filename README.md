@@ -1,16 +1,18 @@
-# ShipNow API — Arquitectura por capas, mocking y manejo centralizado de errores
+# ShipNow API — Arquitectura por capas, mocking, errores centralizados y logging
 
-Pre-entregas **Módulo 1**, **Módulo 2** y **Módulo 3** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1** a **Módulo 4** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 API de ShipNow refactorizada desde un modelo monolítico a una arquitectura por capas
 **Controller → Service → Repository**, con configuración de entorno validada al arranque,
 un diccionario centralizado de constantes del dominio, un módulo de mocking que genera
-usuarios, repartidores, pedidos y entregas de prueba, y una capa común de errores que hace
-que toda la API falle siempre de la misma forma.
+usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
+que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
+registro de lo que pasa adentro del servidor.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
 - **Módulo 3** — capa centralizada de manejo de errores: errores personalizados, diccionario y middleware global.
+- **Módulo 4** — logging y monitoreo básico con Winston: seis niveles, persistencia en archivos con rotación y endpoint de prueba.
 
 ---
 
@@ -97,6 +99,7 @@ src/
 ├── config/
 │   ├── env.config.js      # dotenv + validación de entorno (ÚNICO uso de process.env)
 │   ├── db.config.js       # conexión/desconexión de Mongoose
+│   ├── logger.config.js   # Winston: niveles, formatos, transportes y rotación
 │   └── index.js           # barrel de la capa de configuración
 ├── constants/
 │   └── index.js           # USER_ROLES, ORDER_STATUS, DELIVERY_STATUS... (Object.freeze)
@@ -110,7 +113,8 @@ src/
 │   ├── product.controller.js
 │   ├── user.controller.js
 │   ├── mock.controller.js
-│   └── health.controller.js
+│   ├── health.controller.js
+│   └── logger.controller.js  # endpoint de prueba del logger
 ├── services/
 │   ├── product.service.js
 │   ├── user.service.js
@@ -138,7 +142,8 @@ src/
 │   └── mock.routes.js
 ├── middlewares/
 │   ├── requester.middleware.js  # deja quién ejecuta la request en req.requester
-│   └── error.middleware.js      # manejo centralizado de errores
+│   ├── http.middleware.js       # registra cada petición con nivel http
+│   └── error.middleware.js      # manejo centralizado de errores + logging
 ├── utils/
 │   ├── apiResponse.js     # formato único de respuesta (éxito y error)
 │   └── constants.js       # alias que reexporta src/constants
@@ -146,6 +151,11 @@ src/
 │   └── seed.js
 ├── app.js                 # arma la app Express (no abre puerto)
 └── server.js              # valida config -> conecta DB -> escucha
+
+logs/                      # archivos generados por Winston (ignorados en Git)
+├── README.md              # lo único versionado de esta carpeta
+├── error-YYYY-MM-DD.log
+└── combined-YYYY-MM-DD.log
 ```
 
 ### Flujo de dependencias
@@ -273,6 +283,131 @@ entregada*.
 
 Además, `assignedAt` solo existe si hay repartidor y `deliveredAt` solo si la entrega llegó a
 estado `delivered`.
+
+---
+
+## Logging y monitoreo
+
+La herramienta es **Winston** (`winston` + `winston-daily-rotate-file`). Toda la configuración
+vive en un único archivo, [`src/config/logger.config.js`](src/config/logger.config.js), y el
+resto de la app solo hace:
+
+```js
+const { logger } = require('../config');
+logger.info('Producto creado', { code: 'SN-NB-001' });
+```
+
+No queda **ningún** `console.log` en `src/`: el arranque, la conexión a Mongo, el middleware de
+errores, el módulo de mocks y el seed pasaron todos al logger.
+
+### Niveles
+
+De más grave a menos grave. En Winston, a menor número mayor severidad: al fijar un nivel se
+emite ese y **todos los más graves**.
+
+| Nivel | Nº | Cuándo se usa en ShipNow |
+| --- | --- | --- |
+| `fatal` | 0 | Falla crítica: no se pudo conectar a MongoDB al arrancar, excepción no capturada, fallo del seed |
+| `error` | 1 | Falla inesperada del servidor (5xx): se rompió una escritura, un bug no previsto |
+| `warning` | 2 | Error esperado del negocio (4xx), cantidad inválida en mocks, producto sin stock, cambio de rol |
+| `info` | 3 | Evento normal: servidor iniciado, Mongo conectado, producto creado, datos mock generados |
+| `http` | 4 | Una línea por petición, con status y duración |
+| `debug` | 5 | Detalle fino: stock descontado, configuración del logger |
+
+Formato de cada línea, en consola y en archivo:
+
+```
+2026-08-09 11:15:13 [info]    Servidor ShipNow escuchando en el puerto 8080 {"entorno":"development"}
+2026-08-09 11:15:13 [info]    Conexion a MongoDB establecida {"base":"shipnow"}
+2026-08-09 11:15:21 [warning] PRODUCT_NOT_FOUND: El producto solicitado no existe {"metodo":"GET","status":404}
+2026-08-09 11:15:29 [error]   MOCK_PERSISTENCE_ERROR: Fallo la carga de datos de prueba al insertar "products"
+```
+
+En consola los niveles van coloreados; en los archivos no, para que sean fáciles de grepear.
+
+### Comportamiento según el entorno
+
+Se apoya en `NODE_ENV`, la variable validada en el Módulo 1:
+
+| Entorno | Nivel mínimo en consola | Archivos |
+| --- | --- | --- |
+| `development` | `debug` — se ve todo, incluidas las trazas HTTP | sí |
+| `production` | `info` — sin `debug` ni `http`, para no llenar el disco de ruido | sí |
+| `test` | consola silenciada | **no** se escribe nada a disco |
+
+### Dónde se guardan los logs
+
+En la carpeta [`logs/`](logs/), con rotación diaria:
+
+| Archivo | Qué contiene | Rotación |
+| --- | --- | --- |
+| `error-YYYY-MM-DD.log` | **solo** `error` y `fatal` | 5 MB por archivo, 14 días de historial |
+| `combined-YYYY-MM-DD.log` | desde `info` hacia arriba | 10 MB por archivo, 7 días de historial |
+
+Los archivos rotados se comprimen en `.gz`. Cuando se supera el límite de días, los más viejos
+se borran solos: el historial no crece sin control.
+
+### Qué se ignora en Git
+
+```gitignore
+logs/*
+!logs/README.md
+*.log
+*.log.gz
+```
+
+La carpeta `logs/` **sí** está en el repositorio, pero solo con su `README.md`, que documenta
+qué archivo guarda qué. Todo lo que genera la aplicación queda fuera.
+
+### Cómo probar el logger
+
+Hay un endpoint interno que emite un log de cada nivel de una sola vez. No es una funcionalidad
+del negocio: existe para verificar la configuración de un vistazo.
+
+```bash
+curl http://localhost:8080/api/logger-test
+```
+
+Devuelve qué niveles emitió, en qué entorno está y a dónde van los archivos:
+
+```json
+{
+  "status": "success",
+  "payload": {
+    "mensaje": "Se emitio un log de cada nivel. Revisa la consola y la carpeta de logs.",
+    "entorno": "development",
+    "nivelesEmitidos": ["debug", "http", "info", "warning", "error", "fatal"],
+    "nivelMinimoEnConsola": "debug",
+    "jerarquia": { "fatal": 0, "error": 1, "warning": 2, "info": 3, "http": 4, "debug": 5 }
+  }
+}
+```
+
+Después de llamarlo, en la **consola** se ven los seis niveles, y en el archivo de errores
+quedan **solo dos**:
+
+```bash
+type logs\error-2026-08-09.log
+```
+
+En Linux o Mac:
+
+```bash
+cat logs/error-$(date +%F).log
+```
+
+Para comprobar que un error real también queda registrado — este devuelve `404` al cliente y
+un `warning` en `combined`, sin ensuciar `error.log`:
+
+```bash
+curl http://localhost:8080/api/products/64b7f1f1f1f1f1f1f1f1f1f1
+```
+
+Y para ver el comportamiento en producción, donde `debug` y `http` desaparecen de la consola:
+
+```bash
+npm start
+```
 
 ---
 
@@ -502,8 +637,15 @@ JWT/Passport solo cambia ese archivo.
 
 | Header         | Valores               | Default |
 | -------------- | --------------------- | ------- |
-| `x-user-role`  | `admin` \| `user`     | `user`  |
+| `x-user-role`  | `admin` \| `user` \| `courier` | `user`  |
 | `x-user-id`    | id del usuario logueado | `null` |
+
+### Utilidades
+
+| Método | Ruta            | Descripción                                                  |
+| ------ | --------------- | ------------------------------------------------------------ |
+| GET    | `/health`       | Estado de la API, entorno y uptime                           |
+| GET    | `/logger-test`  | Emite un log de cada nivel para verificar la configuración   |
 
 ### Productos
 
@@ -724,6 +866,20 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 4 — Logging y monitoreo básico
+
+| Criterio                                                          | Dónde se verifica                                                                   |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Winston como logger centralizado                                     | `config/logger.config.js`; no queda ningún `console.log` en `src/`                       |
+| Niveles `debug`, `http`, `info`, `warning`, `error`, `fatal`         | `LEVELS` en `logger.config.js`, con sus colores                                          |
+| Comportamiento distinto según el entorno                             | `resolveConsoleLevel()` usa `NODE_ENV` validado en el Módulo 1                           |
+| Integración con el middleware global de errores                      | `resolveLogLevel()`: 4xx → `warning`, 5xx → `error`, caída de base → `fatal`             |
+| Registro de eventos importantes                                      | Arranque, conexión a Mongo, producto creado, mocks generados, cantidad inválida, ruta inexistente |
+| Persistencia de errores en archivos                                  | `error-%DATE%.log` con `level: 'error'` (incluye `fatal`, que es más severo)             |
+| Rotación de archivos                                                 | `DailyRotateFile`: por fecha, 5/10 MB por archivo, 14/7 días, comprimidos en `.gz`       |
+| Los logs no se suben al repositorio                                  | `.gitignore` ignora `logs/*` salvo `logs/README.md`                                      |
+| Endpoint de prueba del logger                                        | `GET /api/logger-test` emite un log de cada nivel                                        |
 
 ### Módulo 3 — Manejo profesional de errores
 
