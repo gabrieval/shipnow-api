@@ -7,6 +7,7 @@
  * el service, no el esquema.
  */
 const mongoose = require('mongoose');
+const fileSchema = require('./file.schema');
 const { DELIVERY_STATUS } = require('../constants');
 
 const deliverySchema = new mongoose.Schema(
@@ -53,6 +54,11 @@ const deliverySchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: [0, 'Los intentos no pueden ser negativos'],
+    },
+    /** Comprobantes de entrega (constancia de recepcion). Solo metadatos. */
+    receipts: {
+      type: [fileSchema],
+      default: [],
     },
     isMock: {
       type: Boolean,

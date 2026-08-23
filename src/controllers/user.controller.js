@@ -18,6 +18,7 @@ class UserController {
     this.changeRole = this.changeRole.bind(this);
     this.delete = this.delete.bind(this);
     this.login = this.login.bind(this);
+    this.uploadDocument = this.uploadDocument.bind(this);
   }
 
   async getAll(req, res, next) {
@@ -69,6 +70,16 @@ class UserController {
     try {
       const user = await this.service.delete(req.params.uid, req.requester.role);
       return success(res, { deleted: user._id ?? req.params.uid, email: user.email });
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async uploadDocument(req, res, next) {
+    try {
+      // `req.file` lo deja el middleware de Multer; el body trae el tipo de documento.
+      const resultado = await this.service.uploadDocument(req.params.uid, req.file, req.body.documentType);
+      return success(res, resultado, HTTP_STATUS.CREATED);
     } catch (error) {
       return next(error);
     }

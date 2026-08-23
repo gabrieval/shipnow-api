@@ -4,8 +4,10 @@
  * Se declara con `--require` en `.mocharc.json`, asi ningun archivo de test
  * tiene que acordarse de conectar o limpiar.
  */
+const fs = require('fs');
 const { connect, disconnect, clean } = require('./database');
 const { config } = require('../../src/config');
+const { UPLOAD_ROOT } = require('../../src/config/multer.config');
 
 exports.mochaHooks = {
   async beforeAll() {
@@ -24,5 +26,11 @@ exports.mochaHooks = {
 
   async afterAll() {
     await disconnect();
+
+    // Los tests escriben en `uploads-test/`, una carpeta aparte de la real:
+    // se borra entera para no dejar basura despues de cada corrida.
+    if (config.isTest && UPLOAD_ROOT.endsWith('uploads-test')) {
+      await fs.promises.rm(UPLOAD_ROOT, { recursive: true, force: true });
+    }
   },
 };

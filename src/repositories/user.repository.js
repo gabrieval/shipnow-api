@@ -11,7 +11,7 @@ const UserModel = require('../models/user.model');
 const { SORT_ORDER } = require('../constants');
 
 /** Proyeccion publica: sin password, sin isActive. */
-const PUBLIC_PROJECTION = 'firstName lastName email role createdAt updatedAt';
+const PUBLIC_PROJECTION = 'firstName lastName email role documents createdAt updatedAt';
 
 const BASE_FILTER = Object.freeze({ isActive: true });
 
@@ -133,6 +133,17 @@ class UserRepository {
         projection: PUBLIC_PROJECTION,
       })
       .lean();
+  }
+
+  /**
+   * Adjunta los metadatos de un documento al usuario.
+   * `$push` se resuelve en la base: dos cargas simultaneas no se pisan, cosa que
+   * si podria pasar leyendo el array, modificandolo y volviendolo a guardar.
+   */
+  async addDocument(id, metadata) {
+    if (!this.isValidId(id)) return null;
+    await this.model.updateOne(this.#withBaseFilter({ _id: id }), { $push: { documents: metadata } });
+    return this.getById(id);
   }
 
   /** Baja logica del usuario. */

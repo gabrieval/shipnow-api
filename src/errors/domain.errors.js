@@ -154,6 +154,62 @@ class InvalidDeliveryStatusError extends AppError {
   }
 }
 
+// --- Carga de archivos ----------------------------------------------------
+
+/** No llego ningun archivo en la peticion. */
+class FileRequiredError extends AppError {
+  constructor(field) {
+    super(ERROR_CODES.FILE_REQUIRED, {
+      message: `No se recibio ningun archivo en el campo "${field}"`,
+      details: { field, sugerencia: 'Enviar la peticion como multipart/form-data' },
+    });
+  }
+}
+
+/** El tipo MIME del archivo no esta entre los permitidos. */
+class InvalidFileTypeError extends AppError {
+  constructor(received, allowed) {
+    super(ERROR_CODES.INVALID_FILE_TYPE, { details: { received, allowed } });
+  }
+}
+
+/** El archivo supera el limite de tamano configurado. */
+class FileTooLargeError extends AppError {
+  constructor(maxBytes) {
+    super(ERROR_CODES.FILE_TOO_LARGE, {
+      message: `El archivo supera el tamano maximo permitido de ${Math.round(maxBytes / 1024 / 1024)} MB`,
+      details: { maxBytes, maxMb: Math.round(maxBytes / 1024 / 1024) },
+    });
+  }
+}
+
+/** El nombre del campo del formulario no es el que espera el endpoint. */
+class UnexpectedFileFieldError extends AppError {
+  constructor(received, expected) {
+    super(ERROR_CODES.UNEXPECTED_FILE_FIELD, {
+      message: `El campo "${received}" no es el esperado por este endpoint`,
+      details: { received, expected },
+    });
+  }
+}
+
+/** El tipo de documento no esta entre los admitidos por el dominio. */
+class InvalidDocumentTypeError extends AppError {
+  constructor(received, allowed) {
+    super(ERROR_CODES.INVALID_DOCUMENT_TYPE, { details: { received, allowed } });
+  }
+}
+
+/** Fallo la escritura o el borrado del archivo en disco. */
+class FileStorageError extends AppError {
+  constructor({ operation, cause } = {}) {
+    super(ERROR_CODES.FILE_STORAGE_ERROR, {
+      details: { operation, reason: cause?.message },
+      cause,
+    });
+  }
+}
+
 // --- Modulo de mocking ----------------------------------------------------
 
 /**
@@ -214,6 +270,12 @@ class MockPersistenceError extends AppError {
 
 module.exports = {
   ValidationError,
+  FileRequiredError,
+  InvalidFileTypeError,
+  FileTooLargeError,
+  UnexpectedFileFieldError,
+  InvalidDocumentTypeError,
+  FileStorageError,
   InvalidIdError,
   ForbiddenRoleError,
   RouteNotFoundError,

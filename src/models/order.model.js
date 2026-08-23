@@ -6,6 +6,7 @@
  * El total NO se calcula aca (lo hace el service), el modelo solo lo persiste.
  */
 const mongoose = require('mongoose');
+const fileSchema = require('./file.schema');
 const { ORDER_STATUS, ORDER_PRIORITY } = require('../constants');
 
 /** Linea de pedido: se guarda el precio al momento de la compra, no el actual. */
@@ -89,6 +90,11 @@ const orderSchema = new mongoose.Schema(
       type: String,
       trim: true,
       maxlength: 500,
+    },
+    /** Comprobantes de pago asociados al pedido. Solo metadatos. */
+    receipts: {
+      type: [fileSchema],
+      default: [],
     },
     // Marca de dato generado por el modulo de mocking (ver mock.service.js).
     isMock: {

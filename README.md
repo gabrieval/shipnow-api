@@ -1,6 +1,6 @@
-# ShipNow API — Arquitectura por capas, mocking, errores, logging, docs y tests
+# ShipNow API — Capas, mocking, errores, logging, docs, tests y archivos
 
-Pre-entregas **Módulo 1** a **Módulo 6** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1** a **Módulo 7** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 📖 **Documentación interactiva (Swagger UI): [`http://localhost:8080/api/docs`](http://localhost:8080/api/docs)**
 
@@ -10,7 +10,8 @@ un diccionario centralizado de constantes del dominio, un módulo de mocking que
 usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
 que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
 registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI y cubierta por
-una suite de **129 tests funcionales** con Mocha, Chai y Supertest.
+una suite de **151 tests funcionales** con Mocha, Chai y Supertest, y carga de documentos y
+comprobantes con Multer.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
@@ -18,6 +19,7 @@ una suite de **129 tests funcionales** con Mocha, Chai y Supertest.
 - **Módulo 4** — logging y monitoreo básico con Winston: seis niveles, persistencia en archivos con rotación y endpoint de prueba.
 - **Módulo 5** — documentación de la API con Swagger/OpenAPI 3.0 en `/api/docs`.
 - **Módulo 6** — testing funcional con Mocha, Chai y Supertest, con entorno de testing aislado.
+- **Módulo 7** — carga de archivos con Multer: documentos de usuario y comprobantes de pedidos y entregas.
 
 ---
 
@@ -112,6 +114,7 @@ src/
 │   ├── db.config.js       # conexión/desconexión de Mongoose
 │   ├── logger.config.js   # Winston: niveles, formatos, transportes y rotación
 │   ├── swagger.config.js  # OpenAPI: info general, tags y opciones de Swagger UI
+│   ├── multer.config.js   # carga de archivos: destino, nombres, tipos y tamaño
 │   └── index.js           # barrel de la capa de configuración
 ├── constants/
 │   └── index.js           # USER_ROLES, ORDER_STATUS, DELIVERY_STATUS... (Object.freeze)
@@ -134,6 +137,7 @@ src/
 │   ├── user.service.js
 │   ├── order.service.js   # transiciones válidas del ciclo de vida del pedido
 │   ├── delivery.service.js  # coherencia entrega <-> repartidor
+│   ├── file.service.js    # metadatos, borrado del archivo si falla la asociación
 │   └── mock.service.js    # orquesta el mocking: relaciones, totales, permisos
 ├── repositories/
 │   ├── product.repository.js
@@ -150,7 +154,8 @@ src/
 │   ├── product.model.js   # solo esquema
 │   ├── user.model.js
 │   ├── order.model.js
-│   └── delivery.model.js
+│   ├── delivery.model.js
+│   └── file.schema.js     # sub-esquema de metadatos de archivo, compartido
 ├── docs/                  # documentación OpenAPI en YAML, fuera del código
 │   ├── components.yaml    # schemas, parámetros y respuestas de error reutilizables
 │   ├── products.yaml
@@ -158,6 +163,7 @@ src/
 │   ├── orders.yaml
 │   ├── deliveries.yaml
 │   ├── mocks.yaml
+│   ├── uploads.yaml
 │   └── logger.yaml
 ├── routes/
 │   ├── index.js
@@ -169,6 +175,7 @@ src/
 │   └── docs.routes.js     # monta Swagger UI, sin documentación adentro
 ├── middlewares/
 │   ├── requester.middleware.js  # deja quién ejecuta la request en req.requester
+│   ├── upload.middleware.js     # middlewares de Multer ya armados por tipo
 │   ├── http.middleware.js       # registra cada petición con nivel http
 │   └── error.middleware.js      # manejo centralizado de errores + logging
 ├── utils/
@@ -191,7 +198,15 @@ test/                      # suite de tests funcionales (Módulo 6)
 ├── orders.test.js
 ├── deliveries.test.js
 ├── mocks.test.js
+├── uploads.test.js
 └── utilities.test.js      # logger, health, Swagger y rutas inexistentes
+
+uploads/                   # archivos subidos (ignorados en Git)
+├── README.md              # lo único versionado de esta carpeta
+├── documents/<tipo>/      # documentos de usuario, separados por tipo
+└── receipts/
+    ├── orders/            # comprobantes de pago
+    └── deliveries/        # comprobantes de entrega
 
 logs/                      # archivos generados por Winston (ignorados en Git)
 ├── README.md              # lo único versionado de esta carpeta
@@ -327,9 +342,139 @@ estado `delivered`.
 
 ---
 
+## Carga de archivos
+
+Los documentos y comprobantes se suben con **Multer** vía `multipart/form-data`. El archivo se
+guarda en el sistema de archivos del servidor y en MongoDB quedan **solo sus metadatos**.
+
+### Endpoints
+
+| Método | Ruta | Campo del archivo | Campos extra | Qué hace |
+| --- | --- | --- | --- | --- |
+| POST | `/api/users/:uid/documents` | `document` | `documentType` (obligatorio) | Adjunta un documento al usuario |
+| POST | `/api/orders/:oid/receipt` | `receipt` | — | Adjunta un comprobante de pago al pedido |
+| POST | `/api/deliveries/:did/receipt` | `receipt` | — | Adjunta un comprobante de entrega |
+
+### Reglas de la carga
+
+Todas viven en `src/config/multer.config.js` y `src/constants/index.js`. Ni los routers ni los
+services deciden nada de esto:
+
+| Regla | Valor |
+| --- | --- |
+| Tipos aceptados | `image/jpeg`, `image/png`, `image/webp`, `application/pdf` |
+| Tamaño máximo | 5 MB por archivo |
+| Archivos por petición | 1 |
+| Tipos de documento | `id_card`, `driver_license`, `insurance`, `tax_id`, `other` |
+
+### Dónde se guardan
+
+```
+uploads/
+├── documents/            # documentos de usuario, separados por tipo
+│   ├── id_card/
+│   ├── driver_license/
+│   ├── insurance/
+│   ├── tax_id/
+│   └── other/
+└── receipts/
+    ├── orders/           # comprobantes de pago
+    └── deliveries/       # comprobantes de entrega
+```
+
+Las subcarpetas se crean solas la primera vez que se sube un archivo de ese tipo.
+
+**El nombre original no se conserva en disco**: dos usuarios podrían subir `dni.jpg` y pisarse,
+y un nombre que viene del cliente no es de fiar. Se genera uno propio con el formato
+`<timestamp>-<aleatorio>.<extension>`, y el original queda en los metadatos.
+
+### Qué se guarda en MongoDB
+
+**Solo metadatos, nunca el binario.** Los documentos van en `user.documents[]` y los
+comprobantes en `order.receipts[]` y `delivery.receipts[]`, todos con el mismo sub-esquema
+(`src/models/file.schema.js`):
+
+```json
+{
+  "_id": "68f1a2b3c4d5e6f7a8b9c0d9",
+  "originalName": "dni-frente.png",
+  "fileName": "1754741713000-9f3a2b7c1d4e.png",
+  "path": "documents/id_card/1754741713000-9f3a2b7c1d4e.png",
+  "mimeType": "image/png",
+  "size": 245678,
+  "documentType": "id_card",
+  "uploadedAt": "2026-08-09T11:15:13.713Z"
+}
+```
+
+La `path` es **relativa** a la carpeta de uploads: no se filtra la estructura de directorios
+del servidor.
+
+### Qué se ignora en Git
+
+```gitignore
+uploads/*
+!uploads/README.md
+uploads-test/
+```
+
+La carpeta `uploads/` está en el repositorio pero solo con su `README.md`, que documenta la
+estructura. **Ningún archivo subido se versiona.**
+
+### Cómo probarlo
+
+Subir un documento a un usuario:
+
+```bash
+curl -X POST http://localhost:8080/api/users/PEGAR_ID/documents -F "documentType=id_card" -F "document=@C:/ruta/a/dni.png"
+```
+
+Adjuntar un comprobante a un pedido:
+
+```bash
+curl -X POST http://localhost:8080/api/orders/PEGAR_ID/receipt -F "receipt=@C:/ruta/a/pago.pdf"
+```
+
+También se puede probar desde **Swagger UI** (`/api/docs`, tag **Uploads**): el botón
+*Try it out* muestra un selector de archivo para el campo binario.
+
+### Errores
+
+Todos usan el formato centralizado del Módulo 3 y están en el diccionario de errores:
+
+| Caso | HTTP | `error.code` |
+| --- | --- | --- |
+| No se envió ningún archivo | 400 | `FILE_REQUIRED` |
+| Falta el `documentType` | 400 | `VALIDATION_ERROR` |
+| Tipo de documento fuera del enum | 400 | `INVALID_DOCUMENT_TYPE` |
+| El campo del formulario no es el esperado | 400 | `UNEXPECTED_FILE_FIELD` |
+| El archivo supera los 5 MB | 413 | `FILE_TOO_LARGE` |
+| Tipo de archivo no permitido | 415 | `INVALID_FILE_TYPE` |
+| El usuario / pedido / entrega no existe | 404 | `USER_NOT_FOUND`, `ORDER_NOT_FOUND`, `DELIVERY_NOT_FOUND` |
+| No se pudo escribir el archivo | 500 | `FILE_STORAGE_ERROR` |
+
+Los errores propios de Multer (`LIMIT_FILE_SIZE`, `LIMIT_UNEXPECTED_FILE`) se traducen a
+errores del dominio en `multer.config.js`, para que el cliente reciba siempre la misma forma de
+respuesta que en el resto de la API.
+
+### Archivos huérfanos
+
+Multer escribe el archivo **antes** de que el service pueda validar nada. Si después resulta que
+el usuario no existe o el tipo de documento es inválido, el archivo ya está en disco. Por eso
+`file.service.js` envuelve la asociación: si algo falla, **borra el archivo** y recién ahí
+propaga el error. Hay un test que lo verifica contando los archivos de la carpeta antes y después.
+
+### Logging
+
+El logger registra la carga exitosa (`info`, con entidad, nombre de archivo, tipo y tamaño), el
+intento de subir un tipo no permitido (`warning`), el descarte de un archivo huérfano
+(`warning`) y cualquier fallo de escritura (`error`).
+
+---
+
 ## Testing
 
-La suite son **129 tests funcionales** que golpean la API por HTTP, de punta a punta:
+La suite son **151 tests funcionales** que golpean la API por HTTP, de punta a punta:
 router → controller → service → repository → MongoDB.
 
 ### Herramientas
@@ -421,6 +566,7 @@ copy .env.test.example .env.test
 | `orders.test.js` | 28 | Creación, listado, consulta por id y transiciones de estado |
 | `deliveries.test.js` | 14 | Listado, detalle, asignación de repartidor y cambio de estado |
 | `mocks.test.js` | 28 | Generación sin persistir, carga en MongoDB, cantidades inválidas y limpieza |
+| `uploads.test.js` | 21 | Documentos de usuario, comprobantes, validaciones y limpieza de huérfanos |
 | `utilities.test.js` | 14 | Logger, health, Swagger y rutas inexistentes |
 
 ### Qué se valida en cada test
@@ -454,7 +600,7 @@ Ningún test depende de datos cargados a mano ni del estado que dejó otro:
 - Al terminar la suite se borra la base entera y se apaga el servidor en memoria.
 
 Esto se verificó de dos formas: corriendo cada archivo **aislado** (26 + 19 + 28 + 14 + 28 + 14
-= 129) y corriendo la suite completa en **orden invertido**. En ambos casos pasan los 129.
+= 129, más 21 de uploads y 1 de Swagger) y corriendo la suite completa en **orden invertido**.
 
 ### Coherencia con Swagger
 
@@ -955,6 +1101,7 @@ Query params del listado: `?page=1&limit=10&category=electronics&status=availabl
 | POST   | `/users/login`        | público            | Verificación de credenciales                   |
 | PUT    | `/users/:uid`         | dueño o ADMIN      | Actualiza nombre / email / contraseña          |
 | PATCH  | `/users/:uid/role`    | ADMIN              | Cambia el rol (protege al último admin)        |
+| POST   | `/users/:uid/documents` | público          | Adjunta un documento (`multipart/form-data`)   |
 | DELETE | `/users/:uid`         | ADMIN              | Baja lógica (protege al último admin)          |
 
 ### Pedidos
@@ -965,6 +1112,7 @@ Query params del listado: `?page=1&limit=10&category=electronics&status=availabl
 | POST   | `/orders`               | público | Crea un pedido: valida stock, descuenta y calcula el total |
 | GET    | `/orders/:oid`          | público | Detalle, con usuario e items resueltos                   |
 | PATCH  | `/orders/:oid/status`   | ADMIN   | Avanza el estado respetando las transiciones permitidas  |
+| POST   | `/orders/:oid/receipt`  | público | Adjunta un comprobante de pago (`multipart/form-data`)   |
 
 Query params: `?status=pending&priority=urgent&user=<id>&page=1&limit=10&sortBy=total&order=desc`
 
@@ -980,6 +1128,7 @@ terminales.
 | GET    | `/deliveries/:did`         | público | Detalle, con pedido y repartidor resueltos        |
 | PATCH  | `/deliveries/:did/status`  | ADMIN   | Cambia el estado                                  |
 | PATCH  | `/deliveries/:did/courier` | ADMIN   | Asigna un repartidor (usuario con rol `courier`)  |
+| POST   | `/deliveries/:did/receipt` | público | Adjunta un comprobante de entrega                 |
 
 Query params: `?status=assigned&courier=<id>&unassigned=true&page=1&limit=10`
 
@@ -1179,6 +1328,22 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 7 — Carga de archivos
+
+| Criterio | Dónde se verifica |
+| --- | --- |
+| Multer con configuración centralizada, separada de los routers | `config/multer.config.js`; los routers solo usan los middlewares ya armados |
+| Estructura de carpetas por tipo | `documents/<tipo>`, `receipts/orders`, `receipts/deliveries` |
+| La carpeta de uploads está en `.gitignore` | `uploads/*` salvo su README; `uploads-test/` entera |
+| Validaciones conectadas al sistema de errores | 6 códigos nuevos en el diccionario del Módulo 3 |
+| Endpoint de documentos de usuario | `POST /api/users/:uid/documents`, con `documentType` |
+| Endpoint de comprobantes de pedido/entrega | `POST /api/orders/:oid/receipt` y `POST /api/deliveries/:did/receipt` |
+| En la base van solo metadatos | `models/file.schema.js`; hay un test que verifica las claves exactas |
+| Errores específicos de archivos | `FILE_REQUIRED`, `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `UNEXPECTED_FILE_FIELD`, `INVALID_DOCUMENT_TYPE`, `FILE_STORAGE_ERROR` |
+| El logger registra los eventos relevantes | Carga exitosa, tipo no permitido, archivo huérfano descartado, fallo de escritura |
+| Documentados en Swagger como `multipart/form-data` | `docs/uploads.yaml`, tag **Uploads**, con test que lo verifica |
+| Tests funcionales de carga | 21 tests en `test/uploads.test.js` |
 
 ### Módulo 6 — Testing funcional
 

@@ -9,7 +9,7 @@ const mongoose = require('mongoose');
 const OrderModel = require('../models/order.model');
 const { SORT_ORDER } = require('../constants');
 
-const PUBLIC_PROJECTION = 'code user items total status priority shippingAddress notes isMock createdAt updatedAt';
+const PUBLIC_PROJECTION = 'code user items total status priority shippingAddress notes receipts isMock createdAt updatedAt';
 
 const BASE_FILTER = Object.freeze({ isActive: true });
 
@@ -82,6 +82,13 @@ class OrderRepository {
   async create(data) {
     const created = await this.model.create(data);
     return this.getById(created._id);
+  }
+
+  /** Adjunta los metadatos de un comprobante, sin leer y reescribir el array. */
+  async addReceipt(id, metadata) {
+    if (!this.isValidId(id)) return null;
+    await this.model.updateOne(this.#withBaseFilter({ _id: id }), { $push: { receipts: metadata } });
+    return this.getById(id);
   }
 
   /** Actualiza campos puntuales y devuelve el documento resultante. */

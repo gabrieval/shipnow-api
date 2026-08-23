@@ -138,6 +138,11 @@ components:
           description: '`courier` identifica a un repartidor: no es una entidad aparte.'
           enum: [admin, user, courier]
           example: user
+        documents:
+          type: array
+          description: Documentos adjuntos del usuario. Solo metadatos, no el archivo.
+          items:
+            $ref: '#/components/schemas/FileMetadata'
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
@@ -258,6 +263,11 @@ components:
         shippingAddress:
           $ref: '#/components/schemas/ShippingAddress'
         notes: { type: string, example: Tocar timbre dos veces }
+        receipts:
+          type: array
+          description: Comprobantes de pago adjuntos. Solo metadatos.
+          items:
+            $ref: '#/components/schemas/FileMetadata'
         isMock:
           type: boolean
           description: Marca los documentos creados por el modulo de mocking.
@@ -335,6 +345,11 @@ components:
           nullable: true
           description: Solo tiene valor si el estado es `delivered`.
         attempts: { type: integer, example: 0 }
+        receipts:
+          type: array
+          description: Comprobantes de entrega adjuntos. Solo metadatos.
+          items:
+            $ref: '#/components/schemas/FileMetadata'
         isMock: { type: boolean, example: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

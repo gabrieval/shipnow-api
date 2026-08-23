@@ -9,7 +9,7 @@ const DeliveryModel = require('../models/delivery.model');
 const { SORT_ORDER } = require('../constants');
 
 const PUBLIC_PROJECTION =
-  'trackingCode order courier status estimatedDate assignedAt deliveredAt attempts isMock createdAt updatedAt';
+  'trackingCode order courier status estimatedDate assignedAt deliveredAt attempts receipts isMock createdAt updatedAt';
 
 const BASE_FILTER = Object.freeze({ isActive: true });
 
@@ -83,6 +83,13 @@ class DeliveryRepository {
   async create(data) {
     const created = await this.model.create(data);
     return this.getById(created._id);
+  }
+
+  /** Adjunta los metadatos de un comprobante, sin leer y reescribir el array. */
+  async addReceipt(id, metadata) {
+    if (!this.isValidId(id)) return null;
+    await this.model.updateOne(this.#withBaseFilter({ _id: id }), { $push: { receipts: metadata } });
+    return this.getById(id);
   }
 
   /** Actualiza campos puntuales y devuelve el documento resultante. */

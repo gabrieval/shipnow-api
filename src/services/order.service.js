@@ -7,6 +7,7 @@
  */
 const orderRepository = require('../repositories/order.repository');
 const userRepository = require('../repositories/user.repository');
+const fileService = require('./file.service');
 const productRepository = require('../repositories/product.repository');
 const {
   ForbiddenRoleError,
@@ -18,7 +19,15 @@ const {
   UserNotFoundError,
   ValidationError,
 } = require('../errors');
-const { ORDER_STATUS, ORDER_PRIORITY, USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
+const {
+  ORDER_STATUS,
+  ORDER_PRIORITY,
+  USER_ROLES,
+  FILE_OWNER_TYPES,
+  UPLOAD_RULES,
+  PAGINATION,
+  SORT_ORDER,
+} = require('../constants');
 const { config, logger } = require('../config');
 
 const SORTABLE_FIELDS = ['createdAt', 'total', 'status', 'priority'];
@@ -235,6 +244,29 @@ class OrderService {
     logger.info('Pedido creado', { code: created.code, usuario: owner.email, items: resolved.length, total });
 
     return created;
+  }
+
+  /**
+   * Adjunta un comprobante de pago al pedido.
+   * Si el pedido no existe, el archivo recien subido se borra.
+   */
+  async uploadReceipt(id, file) {
+    fileService.assertFileExists(file, UPLOAD_RULES.FIELDS.RECEIPT);
+
+    return fileService.withRollback(file, async () => {
+      const order = await this.repository.getById(id);
+      if (!order) throw new OrderNotFoundError(id);
+
+      const metadata = fileService.buildMetadata(file);
+      const updated = await this.repository.addReceipt(id, metadata);
+
+      fileService.logUpload({ ownerType: FILE_OWNER_TYPES.ORDER, ownerId: id, metadata });
+
+      return {
+        order: updated,
+        receipt: updated.receipts[updated.receipts.length - 1],
+      };
+    });
   }
 
   /** Codigo legible y unico para el pedido. */

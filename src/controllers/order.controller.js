@@ -10,6 +10,7 @@ class OrderController {
   constructor(service = orderService) {
     this.service = service;
     this.getAll = this.getAll.bind(this);
+    this.uploadReceipt = this.uploadReceipt.bind(this);
     this.create = this.create.bind(this);
     this.getById = this.getById.bind(this);
     this.updateStatus = this.updateStatus.bind(this);
@@ -26,6 +27,14 @@ class OrderController {
   async create(req, res, next) {
     try {
       return success(res, await this.service.create(req.body), HTTP_STATUS.CREATED);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async uploadReceipt(req, res, next) {
+    try {
+      return success(res, await this.service.uploadReceipt(req.params.oid, req.file), HTTP_STATUS.CREATED);
     } catch (error) {
       return next(error);
     }
