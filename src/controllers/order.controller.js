@@ -4,11 +4,13 @@
  */
 const orderService = require('../services/order.service');
 const { success } = require('../utils/apiResponse');
+const { HTTP_STATUS } = require('../constants');
 
 class OrderController {
   constructor(service = orderService) {
     this.service = service;
     this.getAll = this.getAll.bind(this);
+    this.create = this.create.bind(this);
     this.getById = this.getById.bind(this);
     this.updateStatus = this.updateStatus.bind(this);
   }
@@ -16,6 +18,14 @@ class OrderController {
   async getAll(req, res, next) {
     try {
       return success(res, await this.service.getAll(req.query));
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async create(req, res, next) {
+    try {
+      return success(res, await this.service.create(req.body), HTTP_STATUS.CREATED);
     } catch (error) {
       return next(error);
     }

@@ -130,21 +130,26 @@ class MockService {
 
   // --- Vista previa (no toca la base) -------------------------------------
 
-  /** Usuarios simulados con roles validos (admin/user), sin persistir. */
+  /**
+   * Usuarios simulados con roles validos (admin/user), sin persistir.
+   * Se les asigna un `_id` efimero para que la vista previa tenga la misma forma
+   * que un usuario real (es lo que documenta el schema `User` de Swagger).
+   */
   previewUsers(count) {
     const total = this.#normalizeCount(count, { label: 'count' });
-    return this.#stripPassword(generateUsers(total));
+    return this.#withEphemeralIds(this.#stripPassword(generateUsers(total)), this.userRepository);
   }
 
   /** Repartidores simulados: usuarios con rol COURIER, sin persistir. */
   previewCouriers(count) {
     const total = this.#normalizeCount(count, { label: 'count' });
-    return this.#stripPassword(generateCouriers(total));
+    return this.#withEphemeralIds(this.#stripPassword(generateCouriers(total)), this.userRepository);
   }
 
   /** Productos simulados, sin persistir. */
   previewProducts(count) {
-    return generateProducts(this.#normalizeCount(count, { label: 'count' }));
+    const total = this.#normalizeCount(count, { label: 'count' });
+    return this.#withEphemeralIds(generateProducts(total), this.productRepository);
   }
 
   /**
@@ -158,7 +163,10 @@ class MockService {
     const users = this.#withEphemeralIds(generateUsers(Math.max(Math.ceil(total / 2), 1)), this.userRepository);
     const products = this.#withEphemeralIds(generateProducts(MOCK_LIMITS.MAX_ITEMS_PER_ORDER * 2), this.productRepository);
 
-    return this.#applyOrderTotals(generateOrders(total, { users, products }));
+    return this.#withEphemeralIds(
+      this.#applyOrderTotals(generateOrders(total, { users, products })),
+      this.orderRepository
+    );
   }
 
   /**
@@ -168,10 +176,10 @@ class MockService {
   previewDeliveries(count) {
     const total = this.#normalizeCount(count, { label: 'count' });
 
-    const orders = this.#withEphemeralIds(this.previewOrders(total), this.orderRepository);
+    const orders = this.previewOrders(total);
     const couriers = this.#withEphemeralIds(generateCouriers(Math.max(Math.ceil(total / 3), 1)), this.userRepository);
 
-    return generateDeliveries({ orders, couriers });
+    return this.#withEphemeralIds(generateDeliveries({ orders, couriers }), this.deliveryRepository);
   }
 
   /**
@@ -198,7 +206,10 @@ class MockService {
         this.#applyOrderTotals(generateOrders(ordersCount, { users: generatedUsers, products: generatedProducts })),
         this.orderRepository
       );
-      generatedDeliveries = generateDeliveries({ orders: generatedOrders, couriers: generatedCouriers });
+      generatedDeliveries = this.#withEphemeralIds(
+        generateDeliveries({ orders: generatedOrders, couriers: generatedCouriers }),
+        this.deliveryRepository
+      );
     }
 
     return {

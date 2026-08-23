@@ -78,6 +78,83 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+    post:
+      tags: [Orders]
+      summary: Crea un pedido
+      description: >
+        Alta de pedido. El usuario y todos los productos tienen que existir, y cada producto
+        tiene que tener stock suficiente.
+
+
+        El **total no se envia**: se calcula como la suma de `precio vigente x cantidad` de
+        cada item. El pedido nace en estado `pending`.
+
+
+        Al crearse, el stock de cada producto se descuenta de forma atomica. Si el descuento
+        falla a mitad de camino, se devuelven los ya descontados y no se crea el pedido.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateInput'
+      responses:
+        '201':
+          description: Pedido creado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Order'
+        '400':
+          description: >
+            Faltan campos obligatorios, `items` esta vacio, una cantidad no es un entero mayor
+            a 0, o la prioridad no es valida (`VALIDATION_ERROR`, `INVALID_ORDER_PRIORITY`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: VALIDATION_ERROR
+                  message: 'Faltan campos obligatorios: items, shippingAddress'
+                  details:
+                    - field: items
+                      message: Es obligatorio
+                    - field: shippingAddress
+                      message: Es obligatorio
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: POST /api/orders
+        '404':
+          description: No existe el usuario (`USER_NOT_FOUND`) o alguno de los productos (`PRODUCT_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Algun producto no tiene stock suficiente (`INSUFFICIENT_STOCK`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INSUFFICIENT_STOCK
+                  message: Stock insuficiente para completar la operacion
+                  details:
+                    requested: 99
+                    available: 3
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: POST /api/orders
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /orders/{oid}:
     get:
       tags: [Orders]

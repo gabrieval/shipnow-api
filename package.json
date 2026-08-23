@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "test": "cross-env NODE_ENV=test mocha",
+    "test:db": "cross-env NODE_ENV=test USE_REAL_DB=true mocha",
+    "test:watch": "cross-env NODE_ENV=test mocha --watch"
   },
   "keywords": [
     "express",
@@ -29,6 +32,15 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "chai": "^4.5.0",
+    "cross-env": "^10.1.0",
+    "mocha": "^11.8.0",
+    "mongodb-memory-server": "^11.2.0",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "diff": "^9.0.0",
+    "serialize-javascript": "^7.1.0"
   }
 }
