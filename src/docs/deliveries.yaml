@@ -1,0 +1,256 @@
+paths:
+  /deliveries:
+    get:
+      tags: [Deliveries]
+      summary: Lista entregas
+      description: >
+        Listado paginado de entregas, con el pedido y el repartidor ya resueltos.
+        Incluye cuantas siguen pendientes de asignacion.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: status
+          description: Filtra por estado de la entrega.
+          schema:
+            type: string
+            enum: [pending_assignment, assigned, in_transit, delivered, failed, returned]
+        - in: query
+          name: courier
+          description: Id del repartidor asignado.
+          schema: { type: string }
+        - in: query
+          name: unassigned
+          description: Si es `true`, deja solo las entregas que todavia no tienen repartidor.
+          schema: { type: boolean }
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [createdAt, estimatedDate, status]
+            default: createdAt
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Listado obtenido correctamente.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          deliveries:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Delivery'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+                          summary:
+                            type: object
+                            properties:
+                              pendingAssignment: { type: integer, example: 3 }
+        '400':
+          description: El estado enviado como filtro no es valido (`INVALID_DELIVERY_STATUS`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_DELIVERY_STATUS
+                  message: El estado de entrega enviado no es valido
+                  details:
+                    received: volando
+                    allowed: [pending_assignment, assigned, in_transit, delivered, failed, returned]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/deliveries?status=volando
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /deliveries/{did}:
+    get:
+      tags: [Deliveries]
+      summary: Obtiene una entrega por id
+      parameters:
+        - in: path
+          name: did
+          required: true
+          description: Id de la entrega.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d4 }
+      responses:
+        '200':
+          description: Entrega encontrada.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Delivery'
+        '404':
+          description: La entrega no existe (`DELIVERY_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: DELIVERY_NOT_FOUND
+                  message: La entrega solicitada no existe
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/deliveries/64b7f1f1f1f1f1f1f1f1f1f1
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /deliveries/{did}/status:
+    patch:
+      tags: [Deliveries]
+      summary: Cambia el estado de una entrega
+      description: >
+        **Requiere rol `admin`.**
+
+
+        Regla de coherencia del dominio: los estados `assigned`, `in_transit`, `delivered`,
+        `failed` y `returned` **exigen un repartidor asignado**. Si la entrega todavia no
+        tiene uno, la API responde 400. Primero hay que usar
+        `PATCH /deliveries/{did}/courier`.
+
+
+        Al pasar a `delivered` se completa `deliveredAt` automaticamente.
+      parameters:
+        - in: path
+          name: did
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending_assignment, assigned, in_transit, delivered, failed, returned]
+                  example: in_transit
+      responses:
+        '200':
+          description: Estado actualizado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Delivery'
+        '400':
+          description: >
+            El estado no existe, falta el campo `status`, o exige repartidor y la entrega no
+            tiene uno asignado (`INVALID_DELIVERY_STATUS`, `VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_DELIVERY_STATUS
+                  message: El estado de entrega enviado no es valido
+                  details:
+                    received: in_transit
+                    allowed: [pending_assignment]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: PATCH /api/deliveries/68f1a2b3c4d5e6f7a8b9c0d4/status
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: La entrega no existe (`DELIVERY_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /deliveries/{did}/courier:
+    patch:
+      tags: [Deliveries]
+      summary: Asigna un repartidor a una entrega
+      description: >
+        **Requiere rol `admin`.**
+
+
+        El usuario asignado tiene que tener rol `courier`: si se envia el id de un `user` o de
+        un `admin`, la API responde 400. Al asignarlo, la entrega pasa a estado `assigned` y se
+        completa `assignedAt`.
+
+
+        Para obtener ids de repartidores: `GET /users?role=courier` con rol admin.
+      parameters:
+        - in: path
+          name: did
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/RequesterRole'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courier]
+              properties:
+                courier:
+                  type: string
+                  description: Id de un usuario con rol `courier`.
+                  example: 68f1a2b3c4d5e6f7a8b9c0d5
+      responses:
+        '200':
+          description: Repartidor asignado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Falta el campo `courier`, o el usuario enviado no tiene rol `courier` (`VALIDATION_ERROR`, `INVALID_ROLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: INVALID_ROLE
+                  message: El rol enviado no es valido
+                  details:
+                    received: user
+                    allowed: [courier]
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: PATCH /api/deliveries/68f1a2b3c4d5e6f7a8b9c0d4/courier
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No existe la entrega (`DELIVERY_NOT_FOUND`) o el usuario enviado como repartidor (`USER_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'

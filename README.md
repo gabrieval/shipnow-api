@@ -1,18 +1,21 @@
-# ShipNow API — Arquitectura por capas, mocking, errores centralizados y logging
+# ShipNow API — Arquitectura por capas, mocking, errores, logging y documentación
 
-Pre-entregas **Módulo 1** a **Módulo 4** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1** a **Módulo 5** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+
+📖 **Documentación interactiva (Swagger UI): [`http://localhost:8080/api/docs`](http://localhost:8080/api/docs)**
 
 API de ShipNow refactorizada desde un modelo monolítico a una arquitectura por capas
 **Controller → Service → Repository**, con configuración de entorno validada al arranque,
 un diccionario centralizado de constantes del dominio, un módulo de mocking que genera
 usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
 que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
-registro de lo que pasa adentro del servidor.
+registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
 - **Módulo 3** — capa centralizada de manejo de errores: errores personalizados, diccionario y middleware global.
 - **Módulo 4** — logging y monitoreo básico con Winston: seis niveles, persistencia en archivos con rotación y endpoint de prueba.
+- **Módulo 5** — documentación de la API con Swagger/OpenAPI 3.0 en `/api/docs`.
 
 ---
 
@@ -77,6 +80,12 @@ Verificar que responde:
 curl http://localhost:8080/api/health
 ```
 
+Y abrir la documentación interactiva en el navegador:
+
+```
+http://localhost:8080/api/docs
+```
+
 ### Prueba de robustez
 
 Si se borra o se deja vacía una variable crítica en el `.env`, la app **no arranca** y muestra
@@ -100,6 +109,7 @@ src/
 │   ├── env.config.js      # dotenv + validación de entorno (ÚNICO uso de process.env)
 │   ├── db.config.js       # conexión/desconexión de Mongoose
 │   ├── logger.config.js   # Winston: niveles, formatos, transportes y rotación
+│   ├── swagger.config.js  # OpenAPI: info general, tags y opciones de Swagger UI
 │   └── index.js           # barrel de la capa de configuración
 ├── constants/
 │   └── index.js           # USER_ROLES, ORDER_STATUS, DELIVERY_STATUS... (Object.freeze)
@@ -113,11 +123,15 @@ src/
 │   ├── product.controller.js
 │   ├── user.controller.js
 │   ├── mock.controller.js
+│   ├── order.controller.js
+│   ├── delivery.controller.js
 │   ├── health.controller.js
 │   └── logger.controller.js  # endpoint de prueba del logger
 ├── services/
 │   ├── product.service.js
 │   ├── user.service.js
+│   ├── order.service.js   # transiciones válidas del ciclo de vida del pedido
+│   ├── delivery.service.js  # coherencia entrega <-> repartidor
 │   └── mock.service.js    # orquesta el mocking: relaciones, totales, permisos
 ├── repositories/
 │   ├── product.repository.js
@@ -135,11 +149,22 @@ src/
 │   ├── user.model.js
 │   ├── order.model.js
 │   └── delivery.model.js
+├── docs/                  # documentación OpenAPI en YAML, fuera del código
+│   ├── components.yaml    # schemas, parámetros y respuestas de error reutilizables
+│   ├── products.yaml
+│   ├── users.yaml
+│   ├── orders.yaml
+│   ├── deliveries.yaml
+│   ├── mocks.yaml
+│   └── logger.yaml
 ├── routes/
 │   ├── index.js
 │   ├── product.routes.js  # solo path -> método del controller
 │   ├── user.routes.js
-│   └── mock.routes.js
+│   ├── order.routes.js
+│   ├── delivery.routes.js
+│   ├── mock.routes.js
+│   └── docs.routes.js     # monta Swagger UI, sin documentación adentro
 ├── middlewares/
 │   ├── requester.middleware.js  # deja quién ejecuta la request en req.requester
 │   ├── http.middleware.js       # registra cada petición con nivel http
@@ -283,6 +308,98 @@ entregada*.
 
 Además, `assignedAt` solo existe si hay repartidor y `deliveredAt` solo si la entrega llegó a
 estado `delivered`.
+
+---
+
+## Documentación con Swagger
+
+La API se documenta con **Swagger / OpenAPI 3.0.3**, usando `swagger-jsdoc` para armar la
+especificación y `swagger-ui-express` para servirla.
+
+### Cómo acceder
+
+Con el servidor levantado (`npm run dev`), la documentación interactiva está en:
+
+```
+http://localhost:8080/api/docs
+```
+
+Desde ahí se puede leer y **probar cada endpoint** con el botón *Try it out*. La especificación
+cruda, por si querés importarla en Postman o Insomnia, está en:
+
+```
+http://localhost:8080/api/docs.json
+```
+
+### Qué está documentado
+
+Los endpoints están agrupados por tags, uno por módulo:
+
+| Tag | Endpoints | Qué cubre |
+| --- | --- | --- |
+| **Users** | 7 | Registro, login, consulta, actualización, cambio de rol y baja |
+| **Products** | 7 | Catálogo, alta, actualización, descuento de stock y baja |
+| **Orders** | 3 | Consulta de pedidos y avance del ciclo de vida |
+| **Deliveries** | 4 | Consulta, cambio de estado y asignación de repartidor |
+| **Mocks** | 9 | Generación de datos simulados y carga controlada en MongoDB |
+| **Logger** | 2 | Endpoint de prueba del logger y estado de la API |
+
+Son **26 rutas / 32 operaciones**, con método, descripción, parámetros de ruta y query, body
+esperado, respuesta exitosa y todas las respuestas de error que la API realmente devuelve.
+
+### Schemas reutilizables
+
+En [`src/docs/components.yaml`](src/docs/components.yaml), referenciados con `$ref` desde
+cada endpoint:
+
+`User`, `UserCreateInput`, `Product`, `ProductCreateInput`, `Order`, `OrderItem`,
+`ShippingAddress`, `Delivery`, `Pagination`, `SuccessResponse` y `ErrorResponse`.
+
+También hay parámetros reutilizables (`x-user-role`, `x-user-id`, `page`, `limit`, `order`) y
+respuestas de error reutilizables (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`,
+`Conflict`, `UnprocessableEntity`, `InternalError`, `InvalidMockCount`).
+
+Los errores documentados **son los reales**: cada `code` que aparece en la documentación existe
+en el diccionario de errores del Módulo 3. Están cubiertos los casos que pide la consigna —
+datos inválidos, recurso no encontrado, credenciales incorrectas, error interno, cantidad
+inválida en mocks y estado inválido en pedidos y entregas.
+
+### Dónde vive la documentación
+
+Separada del código de rutas, que es lo que pide la consigna:
+
+| Archivo | Qué tiene |
+| --- | --- |
+| `src/config/swagger.config.js` | Info general, tags, servidor y opciones de Swagger UI |
+| `src/docs/*.yaml` | La descripción de cada endpoint y los schemas, un archivo por módulo |
+| `src/routes/docs.routes.js` | Solo monta Swagger UI. Tres líneas, cero documentación |
+
+Los archivos de `routes/` siguen teniendo una línea por endpoint, sin un solo comentario de
+Swagger mezclado con la lógica.
+
+### Aclaraciones para probar los endpoints
+
+**Todavía no hay autenticación** (llega en un módulo posterior), así que el rol se simula con
+headers. En Swagger UI, los endpoints que lo necesitan tienen el campo `x-user-role` entre sus
+parámetros: hay que escribir `admin` ahí antes de darle *Execute*.
+
+| Header | Valores | Default |
+| --- | --- | --- |
+| `x-user-role` | `admin`, `user`, `courier` | `user` |
+| `x-user-id` | id del usuario logueado | `null` |
+
+**Recorrido sugerido** para probar la API desde cero:
+
+1. `POST /mocks/generateData` con `x-user-role: admin` — genera usuarios, repartidores, productos, pedidos y entregas relacionados.
+2. `GET /orders` y `GET /deliveries` — ver lo que se generó, con las relaciones resueltas.
+3. `GET /users?role=courier` con rol admin — obtener el id de un repartidor.
+4. `PATCH /deliveries/{did}/courier` — asignarlo a una entrega.
+5. `PATCH /orders/{oid}/status` — avanzar el pedido respetando las transiciones válidas.
+6. `DELETE /mocks` con rol admin — limpiar todo lo generado.
+
+**Sobre Orders y Deliveries.** Los pedidos y las entregas se crean desde el módulo de mocks; la
+API expone su consulta, el avance de estado y la asignación de repartidor. Los endpoints
+documentados son exactamente esos: no hay un `POST /orders` documentado porque no existe.
 
 ---
 
@@ -644,6 +761,8 @@ JWT/Passport solo cambia ese archivo.
 
 | Método | Ruta            | Descripción                                                  |
 | ------ | --------------- | ------------------------------------------------------------ |
+| GET    | `/docs`         | Documentación interactiva (Swagger UI)                       |
+| GET    | `/docs.json`    | Especificación OpenAPI cruda                                 |
 | GET    | `/health`       | Estado de la API, entorno y uptime                           |
 | GET    | `/logger-test`  | Emite un log de cada nivel para verificar la configuración   |
 
@@ -672,6 +791,34 @@ Query params del listado: `?page=1&limit=10&category=electronics&status=availabl
 | PUT    | `/users/:uid`         | dueño o ADMIN      | Actualiza nombre / email / contraseña          |
 | PATCH  | `/users/:uid/role`    | ADMIN              | Cambia el rol (protege al último admin)        |
 | DELETE | `/users/:uid`         | ADMIN              | Baja lógica (protege al último admin)          |
+
+### Pedidos
+
+| Método | Ruta                    | Permiso | Descripción                                              |
+| ------ | ----------------------- | ------- | -------------------------------------------------------- |
+| GET    | `/orders`               | público | Listado paginado + total facturado                       |
+| GET    | `/orders/:oid`          | público | Detalle, con usuario e items resueltos                   |
+| PATCH  | `/orders/:oid/status`   | ADMIN   | Avanza el estado respetando las transiciones permitidas  |
+
+Query params: `?status=pending&priority=urgent&user=<id>&page=1&limit=10&sortBy=total&order=desc`
+
+Transiciones válidas: `pending → confirmed|cancelled`, `confirmed → preparing|cancelled`,
+`preparing → shipped|cancelled`, `shipped → delivered|cancelled`. `delivered` y `cancelled` son
+terminales.
+
+### Entregas
+
+| Método | Ruta                       | Permiso | Descripción                                       |
+| ------ | -------------------------- | ------- | ------------------------------------------------- |
+| GET    | `/deliveries`              | público | Listado + cuántas están sin repartidor            |
+| GET    | `/deliveries/:did`         | público | Detalle, con pedido y repartidor resueltos        |
+| PATCH  | `/deliveries/:did/status`  | ADMIN   | Cambia el estado                                  |
+| PATCH  | `/deliveries/:did/courier` | ADMIN   | Asigna un repartidor (usuario con rol `courier`)  |
+
+Query params: `?status=assigned&courier=<id>&unassigned=true&page=1&limit=10`
+
+Regla de coherencia: los estados `assigned`, `in_transit`, `delivered`, `failed` y `returned`
+exigen repartidor asignado. Sin uno, la API responde `400`.
 
 ### Mocks — `/api/mocks`
 
@@ -866,6 +1013,21 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 5 — Documentación con Swagger
+
+| Criterio | Dónde se verifica |
+| --- | --- |
+| Swagger UI en una ruta específica | `GET /api/docs`, montado en `routes/docs.routes.js` |
+| Configuración separada de la lógica de rutas | `config/swagger.config.js` + `src/docs/*.yaml`; los routers no tienen anotaciones |
+| Información general: nombre, versión, descripción, servidor y propósito | Bloque `info` y `servers` de `swagger.config.js` |
+| Agrupada por tags | `Users`, `Products`, `Orders`, `Deliveries`, `Mocks`, `Logger` — ningún endpoint sin tag |
+| Método, ruta, descripción, params, body, respuesta y errores por endpoint | Verificado en las 32 operaciones |
+| Schemas reutilizables | `User`, `Order`, `Delivery`, `OrderItem`, `ErrorResponse`, `SuccessResponse` y 5 más |
+| Los errores documentados coinciden con los reales | Los 18 `code` documentados existen en el diccionario del Módulo 3 |
+| Endpoints de mocks documentados | Los 9, con body, valores por defecto y errores por cantidad inválida |
+| Endpoint del logger documentado como herramienta interna | `logger.yaml` lo aclara en la primera línea de la descripción |
+| Lo documentado refleja la API real | Comparación automática entre las rutas del router de Express y los paths del spec, en ambas direcciones |
 
 ### Módulo 4 — Logging y monitoreo básico
 
