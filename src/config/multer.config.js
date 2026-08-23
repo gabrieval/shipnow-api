@@ -27,10 +27,15 @@ const { InvalidFileTypeError, FileTooLargeError, UnexpectedFileFieldError, FileS
  */
 const UPLOAD_ROOT = path.resolve(__dirname, '../../', config.isTest ? 'uploads-test' : 'uploads');
 
-/** Crea la carpeta destino si no existe. Multer no la crea por su cuenta. */
-function ensureFolder(folder) {
+/**
+ * Crea la carpeta destino si no existe. Multer no la crea por su cuenta.
+ *
+ * Asincronica a proposito: `mkdirSync` bloquearia el Event Loop en cada carga,
+ * y el destino de Multer admite callback justamente para esto.
+ */
+async function ensureFolder(folder) {
   const destino = path.join(UPLOAD_ROOT, folder);
-  fs.mkdirSync(destino, { recursive: true });
+  await fs.promises.mkdir(destino, { recursive: true });
   return destino;
 }
 
@@ -44,7 +49,7 @@ function ensureFolder(folder) {
 function buildFilename(file) {
   const extension = UPLOAD_RULES.ALLOWED_MIME_TYPES[file.mimetype] ?? path.extname(file.originalname);
   const marca = Date.now();
-  const aleatorio = crypto.randomBytes(6).toString('hex');
+  const aleatorio = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   return `${marca}-${aleatorio}${extension}`;
 }
 
@@ -77,12 +82,10 @@ function fileFilter(req, file, done) {
 function buildUploader({ folder, field }) {
   const storage = multer.diskStorage({
     destination(req, file, done) {
-      try {
-        const subcarpeta = typeof folder === 'function' ? folder(req) : folder;
-        done(null, ensureFolder(subcarpeta));
-      } catch (error) {
-        done(new FileStorageError({ operation: 'crear la carpeta destino', cause: error }));
-      }
+      const subcarpeta = typeof folder === 'function' ? folder(req) : folder;
+      ensureFolder(subcarpeta)
+        .then((destino) => done(null, destino))
+        .catch((error) => done(new FileStorageError({ operation: 'crear la carpeta destino', cause: error })));
     },
     filename(req, file, done) {
       done(null, buildFilename(file));

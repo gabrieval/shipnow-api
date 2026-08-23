@@ -1,6 +1,6 @@
-# ShipNow API — Capas, mocking, errores, logging, docs, tests y archivos
+# ShipNow API — Capas, mocking, errores, logs, docs, tests, archivos y Docker
 
-Pre-entregas **Módulo 1** a **Módulo 7** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1** a **Módulo 8** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 📖 **Documentación interactiva (Swagger UI): [`http://localhost:8080/api/docs`](http://localhost:8080/api/docs)**
 
@@ -10,8 +10,8 @@ un diccionario centralizado de constantes del dominio, un módulo de mocking que
 usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
 que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
 registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI y cubierta por
-una suite de **151 tests funcionales** con Mocha, Chai y Supertest, y carga de documentos y
-comprobantes con Multer.
+una suite de **178 tests funcionales** con Mocha, Chai y Supertest, carga de documentos y
+comprobantes con Multer, y la API contenerizada con Docker.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
@@ -20,6 +20,7 @@ comprobantes con Multer.
 - **Módulo 5** — documentación de la API con Swagger/OpenAPI 3.0 en `/api/docs`.
 - **Módulo 6** — testing funcional con Mocha, Chai y Supertest, con entorno de testing aislado.
 - **Módulo 7** — carga de archivos con Multer: documentos de usuario y comprobantes de pedidos y entregas.
+- **Módulo 8** — performance, configuración por entorno, health check y Docker.
 
 ---
 
@@ -76,6 +77,12 @@ Opcional — cargar datos de prueba (2 usuarios y 4 productos):
 
 ```bash
 npm run seed
+```
+
+Correr los tests (no hace falta tener MongoDB: levanta uno en memoria):
+
+```bash
+npm test
 ```
 
 Verificar que responde:
@@ -342,6 +349,217 @@ estado `delivered`.
 
 ---
 
+## Producción y Docker
+
+### Variables de entorno
+
+Hay un archivo por entorno, y **ninguno se versiona**. Lo que sí está en el repo son los
+ejemplos:
+
+| Entorno | Archivo | Ejemplo versionado |
+| --- | --- | --- |
+| Desarrollo | `.env` | `.env.example` |
+| Testing | `.env.test` | `.env.test.example` |
+| Docker | `.env.docker` | `.env.docker.example` |
+
+`src/config/env.config.js` elige cuál cargar según `NODE_ENV` y **valida todo al arranque**.
+
+**Críticas** — si falta alguna, la app no arranca:
+
+| Variable | Ejemplo | Validación |
+| --- | --- | --- |
+| `NODE_ENV` | `production` | Uno de `development`, `production`, `test` |
+| `PORT` | `8080` | Entero entre 1 y 65535 |
+| `MONGODB_URI` | `mongodb://mongo:27017/shipnow` | Debe empezar con `mongodb://` o `mongodb+srv://` |
+
+**Opcionales** — tienen valor por defecto:
+
+| Variable | Por defecto | Para qué |
+| --- | --- | --- |
+| `LOG_LEVEL` | `debug` / `info` / `error` según entorno | Nivel mínimo de log |
+| `API_PUBLIC_URL` | `http://localhost:<PORT>` | URL que Swagger declara como servidor |
+| `ENABLE_INTERNAL_ENDPOINTS` | `false` en producción, `true` en el resto | Habilita `/api/mocks` y `/api/logger-test` |
+| `ENABLE_DOCS` | `true` | Habilita `/api/docs` |
+| `DEFAULT_PAGE_SIZE` | `10` | Documentos por página |
+| `BCRYPT_SALT_ROUNDS` | `10` | Rondas de hashing |
+
+**No hay secretos escritos en el código.** El proyecto todavía no consume APIs de terceros ni
+emite tokens; cuando se incorpore autenticación, el `JWT_SECRET` va por variable de entorno.
+
+Si falta una variable crítica, la app **no arranca** y explica exactamente qué falta:
+
+```
+[config] No se pudo iniciar ShipNow: la configuracion de entorno es invalida.
+
+- MONGODB_URI: falta definirla en el archivo .env
+
+Solucion: copia el archivo .env.example como .env y completa los valores.
+```
+
+### Health check
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+```json
+{
+  "status": "success",
+  "payload": {
+    "status": "ok",
+    "environment": "production",
+    "version": "1.0.0",
+    "uptime": 20.73,
+    "timestamp": "2026-08-23T22:28:52.091Z",
+    "database": "connected"
+  }
+}
+```
+
+**No expone nada sensible**: ni la URI de la base, ni variables de entorno, ni rutas del
+servidor. Solo si la API responde y si el enlace con MongoDB está activo. Docker lo usa como
+`HEALTHCHECK` del contenedor.
+
+### Criterio sobre los endpoints internos
+
+`/api/mocks` y `/api/logger-test` son herramientas de desarrollo: el primero **escribe y borra
+datos en masa**, el segundo solo sirve para verificar la configuración de logs.
+
+**En producción quedan deshabilitados por defecto** y responden `404 ROUTE_NOT_FOUND` — no
+`403`, para no revelar que hay algo detrás. Se encienden a propósito con
+`ENABLE_INTERNAL_ENDPOINTS=true`, por ejemplo en un entorno de staging.
+
+| Endpoint | development / test | production |
+| --- | --- | --- |
+| `/api/mocks/*` | habilitado | **deshabilitado** (configurable) |
+| `/api/logger-test` | habilitado | **deshabilitado** (configurable) |
+| `/api/docs` | habilitado | habilitado (configurable con `ENABLE_DOCS`) |
+| `/api/health` | habilitado | **siempre habilitado** |
+
+Swagger queda encendido porque es de solo lectura y no expone datos. El health check queda
+siempre encendido: apagarlo dejaría al orquestador sin forma de saber si la instancia está sana.
+
+### Correr con Docker
+
+Preparar las variables:
+
+```bash
+copy .env.docker.example .env.docker
+```
+
+Levantar la API junto con su MongoDB:
+
+```bash
+docker compose up --build
+```
+
+La API queda en **`http://localhost:8080`**. Ver que responde:
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+Y la documentación en el navegador: `http://localhost:8080/api/docs`
+
+Para apagar todo:
+
+```bash
+docker compose down
+```
+
+### Solo la imagen, sin Compose
+
+```bash
+docker build -t shipnow-api .
+```
+
+```bash
+docker run -p 8080:8080 --env-file .env.docker -e MONGODB_URI=mongodb://host.docker.internal:27017/shipnow shipnow-api
+```
+
+Las variables se pasan **en tiempo de ejecución**, nunca dentro de la imagen.
+
+### Qué hace el Dockerfile
+
+- **Build en dos etapas**: la primera resuelve dependencias, la segunda arma la imagen final.
+  Las herramientas de compilación de bcrypt y el caché de npm no quedan en la imagen desplegada.
+- **`npm ci --omit=dev`**: instala exactamente lo del lockfile y deja fuera mocha, chai y
+  supertest.
+- **No corre como root**: usa el usuario `node`. Si alguien escapa del proceso, no es
+  administrador del contenedor.
+- **`tini` como PID 1**: reenvía las señales para que `SIGTERM` llegue a Node y el cierre
+  ordenado del servidor funcione de verdad.
+- **`HEALTHCHECK`**: consulta `/api/health`, así el orquestador sabe si la API está sana y no
+  solo si el proceso vive.
+
+### Qué NO va al repositorio ni a la imagen
+
+`.gitignore` (repositorio) y `.dockerignore` (imagen) cubren:
+
+| Qué | Por qué |
+| --- | --- |
+| `node_modules/` | Se instala en cada entorno |
+| `.env`, `.env.test`, `.env.docker` | Contienen configuración del entorno; se versionan solo los `.example` |
+| `logs/*` | Los genera la app; se versiona solo `logs/README.md` |
+| `uploads/*`, `uploads-test/` | Los suben los usuarios; se versiona solo `uploads/README.md` |
+| `test/`, `coverage/` | No van a la imagen de producción |
+| `.git/` | No tiene sentido dentro de la imagen |
+
+### Logs y uploads en el contenedor
+
+Ambas carpetas están montadas como volúmenes en `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./logs:/app/logs
+  - ./uploads:/app/uploads
+```
+
+Sin eso, **los archivos subidos y los logs se perderían** cada vez que se recrea el contenedor,
+porque el sistema de archivos de un contenedor es efímero. Para un despliegue real, `uploads/`
+debería moverse a un almacenamiento externo (S3 o similar): el disco de un contenedor no es un
+lugar donde guardar archivos de forma permanente.
+
+---
+
+## Performance
+
+Lo que se revisó en el Módulo 8 y qué se corrigió:
+
+### Listados
+
+Todos los endpoints que devuelven colecciones están paginados y **acotados**: `page`, `limit` y
+filtros, con un techo de **100 documentos por página** (`PAGINATION.MAX_LIMIT`). Un
+`?limit=100000` se recorta al máximo en vez de traer la colección entera; hay tests que lo
+verifican para productos, pedidos, entregas y usuarios.
+
+Además, los repositorios usan `.lean()` (documentos planos, sin la maquinaria de Mongoose),
+proyecciones explícitas (nunca `SELECT *`) y `countDocuments` en paralelo con la consulta.
+
+### Dos problemas encontrados y corregidos
+
+**`fs.mkdirSync` en cada carga de archivo.** Multer creaba la carpeta destino de forma
+sincrónica, **bloqueando el Event Loop** en cada subida. Pasó a `fs.promises.mkdir`, que es lo
+que el callback de `destination` está esperando. También se reemplazó `crypto.randomBytes` por
+`crypto.randomUUID`.
+
+**Consulta N+1 al crear un pedido.** `POST /api/orders` pedía los productos **uno por uno**: un
+pedido de 5 items disparaba 5 consultas. Ahora `productRepository.getManyByIds()` los trae en
+una sola con `$in` y devuelve un `Map` para buscar sin recorrer.
+
+### Carga de archivos
+
+Límite de **5 MB** por archivo, **un archivo** por petición y una lista cerrada de tipos MIME.
+Los archivos van al disco, **nunca a MongoDB** (ahí solo viajan los metadatos), y la carpeta
+está fuera del repositorio. Ver [Carga de archivos](#carga-de-archivos).
+
+### Logs
+
+El volumen se controla con `LOG_LEVEL`: en producción no se emiten `debug` ni `http`. Los
+archivos rotan por fecha con tope de tamaño y días de retención, así que no crecen sin control.
+
+---
+
 ## Carga de archivos
 
 Los documentos y comprobantes se suben con **Multer** vía `multipart/form-data`. El archivo se
@@ -474,7 +692,7 @@ intento de subir un tipo no permitido (`warning`), el descarte de un archivo hu�
 
 ## Testing
 
-La suite son **151 tests funcionales** que golpean la API por HTTP, de punta a punta:
+La suite son **178 tests funcionales** que golpean la API por HTTP, de punta a punta:
 router → controller → service → repository → MongoDB.
 
 ### Herramientas
@@ -566,6 +784,7 @@ copy .env.test.example .env.test
 | `orders.test.js` | 28 | Creación, listado, consulta por id y transiciones de estado |
 | `deliveries.test.js` | 14 | Listado, detalle, asignación de repartidor y cambio de estado |
 | `mocks.test.js` | 28 | Generación sin persistir, carga en MongoDB, cantidades inválidas y limpieza |
+| `production.test.js` | 27 | Health check, límites de listados, endpoints internos, entorno y Docker |
 | `uploads.test.js` | 21 | Documentos de usuario, comprobantes, validaciones y limpieza de huérfanos |
 | `utilities.test.js` | 14 | Logger, health, Swagger y rutas inexistentes |
 
@@ -1328,6 +1547,22 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 8 — Performance, escalabilidad y Docker
+
+| Criterio | Dónde se verifica |
+| --- | --- |
+| Los listados usan paginación, límite y filtros | Techo de 100 por página; tests que fuerzan `?limit=100000` |
+| La carga de archivos tiene límites | 5 MB, 1 archivo, tipos cerrados, uploads fuera del repo |
+| Sin operaciones sincrónicas que bloqueen el Event Loop | `mkdirSync` → `fs.promises.mkdir`; N+1 resuelto con `$in` |
+| Variables por entorno, sin secretos en el código | `.env`, `.env.test`, `.env.docker`, con sus `.example` |
+| La app valida las variables críticas y no arranca si faltan | `env.config.js` acumula errores y corta con mensaje claro |
+| Health check simple que no expone información sensible | `GET /api/health`, con test que verifica que no filtre la URI |
+| Criterio definido sobre los endpoints internos | Apagados en producción por defecto; documentado y configurable |
+| `Dockerfile` con imagen de Node, dependencias, puerto y arranque | Build en dos etapas, `npm ci --omit=dev`, `USER node`, `HEALTHCHECK` |
+| `.dockerignore` con node_modules, .env, .git, logs, uploads, coverage | Verificado por test |
+| El contenedor recibe variables desde un archivo externo | `env_file: .env.docker` en Compose |
+| La API queda disponible y permite probar health, Swagger y un endpoint principal | Verificado ejecutando el contenedor |
 
 ### Módulo 7 — Carga de archivos
 

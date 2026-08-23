@@ -42,14 +42,12 @@ const COLORS = Object.freeze({
 winston.addColors(COLORS);
 
 /**
- * Nivel minimo segun el entorno:
- *  - development: `debug`, para ver todo mientras se trabaja.
- *  - production: `info`, para no llenar el disco con ruido.
- *  - test: `error`, para que la salida de los tests quede limpia.
+ * Nivel minimo de log. Lo decide `LOG_LEVEL`, que a su vez tiene un valor por
+ * defecto segun el entorno (debug en desarrollo, info en produccion, error en
+ * testing). Asi se puede subir el detalle en produccion sin tocar codigo.
  */
 function resolveConsoleLevel() {
-  if (config.isTest) return 'error';
-  return config.isProduction ? 'info' : 'debug';
+  return config.logLevel;
 }
 
 /** `2026-08-01 10:12:03 [info]    Servidor escuchando... {"port":8080}` */

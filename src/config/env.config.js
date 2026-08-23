@@ -49,6 +49,22 @@ function optional(key, fallback) {
   return value === undefined || String(value).trim() === '' ? fallback : String(value).trim();
 }
 
+/**
+ * Lee una variable booleana. Admite `true`/`false` en cualquier combinacion de
+ * mayusculas; cualquier otro valor se reporta como error en vez de asumirse.
+ */
+function parseBoolean(key, fallback) {
+  const value = process.env[key];
+  if (value === undefined || String(value).trim() === '') return fallback;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+
+  errors.push(`- ${key}: "${value}" no es valido. Valores admitidos: true | false`);
+  return fallback;
+}
+
 // --- Lectura de las tres variables criticas -------------------------------
 
 const nodeEnv = required('NODE_ENV');
@@ -82,6 +98,38 @@ if (!Number.isInteger(saltRounds) || saltRounds < 4 || saltRounds > 15) {
   errors.push(`- BCRYPT_SALT_ROUNDS: "${process.env.BCRYPT_SALT_ROUNDS}" debe ser un entero entre 4 y 15`);
 }
 
+// Nivel minimo de log. Por defecto depende del entorno: en produccion no se
+// emiten `debug` ni `http` para no llenar el disco de ruido.
+const VALID_LOG_LEVELS = ['fatal', 'error', 'warning', 'info', 'http', 'debug'];
+const defaultLogLevel = nodeEnv === 'production' ? 'info' : nodeEnv === 'test' ? 'error' : 'debug';
+const logLevel = optional('LOG_LEVEL', defaultLogLevel);
+if (!VALID_LOG_LEVELS.includes(logLevel)) {
+  errors.push(`- LOG_LEVEL: "${logLevel}" no es valido. Valores admitidos: ${VALID_LOG_LEVELS.join(' | ')}`);
+}
+
+/**
+ * URL publica de la API. La usa Swagger para declarar el servidor: dentro de un
+ * contenedor o detras de un proxy, "localhost" no es la direccion real.
+ */
+const publicUrl = optional('API_PUBLIC_URL', `http://localhost:${port ?? 8080}`);
+if (!/^https?:\/\//.test(publicUrl)) {
+  errors.push(`- API_PUBLIC_URL: "${publicUrl}" debe empezar con http:// o https://`);
+}
+
+/**
+ * Endpoints internos (mocks y prueba del logger). Son herramientas de
+ * desarrollo: en produccion quedan apagados por defecto, porque permiten
+ * escribir y borrar datos en masa. Se pueden habilitar a proposito.
+ */
+const enableInternal = parseBoolean('ENABLE_INTERNAL_ENDPOINTS', nodeEnv !== 'production');
+
+/**
+ * Documentacion Swagger. Queda encendida por defecto tambien en produccion: es
+ * de solo lectura y no expone datos, pero se puede apagar si el despliegue es
+ * privado.
+ */
+const enableDocs = parseBoolean('ENABLE_DOCS', true);
+
 // --- Corte del arranque si hubo problemas ----------------------------------
 
 if (errors.length > 0) {
@@ -109,6 +157,10 @@ const config = Object.freeze({
   mongodbUri,
   defaultPageSize,
   saltRounds,
+  logLevel,
+  publicUrl,
+  enableInternal,
+  enableDocs,
 });
 
 module.exports = config;

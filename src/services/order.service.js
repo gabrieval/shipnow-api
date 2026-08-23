@@ -190,9 +190,12 @@ class OrderService {
     const owner = await this.userRepository.getById(user);
     if (!owner) throw new UserNotFoundError(user);
 
+    // Una sola consulta para todos los productos del pedido, en vez de una por item.
+    const catalogo = await this.productRepository.getManyByIds(items.map((item) => item.product));
+
     const resolved = [];
     for (const item of items) {
-      const product = await this.productRepository.getById(item.product);
+      const product = catalogo.get(String(item.product));
       if (!product) throw new ProductNotFoundError(item.product);
 
       const quantity = Number(item.quantity);
