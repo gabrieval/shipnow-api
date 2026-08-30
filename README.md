@@ -380,6 +380,7 @@ ejemplos:
 | `API_PUBLIC_URL` | `http://localhost:<PORT>` | URL que Swagger declara como servidor |
 | `ENABLE_INTERNAL_ENDPOINTS` | `false` en producción, `true` en el resto | Habilita `/api/mocks` y `/api/logger-test` |
 | `ENABLE_DOCS` | `true` | Habilita `/api/docs` |
+| `HOST_PORT` | `8080` | Solo para Docker Compose: puerto del host donde se publica la API |
 | `DEFAULT_PAGE_SIZE` | `10` | Documentos por página |
 | `BCRYPT_SALT_ROUNDS` | `10` | Rondas de hashing |
 
@@ -453,7 +454,27 @@ Levantar la API junto con su MongoDB:
 docker compose up --build
 ```
 
-La API queda en **`http://localhost:8080`**. Ver que responde:
+La API queda en **`http://localhost:8080`**.
+
+Para publicarla en otro puerto del host, usar `HOST_PORT` (el puerto interno del contenedor
+siempre es 8080):
+
+```bash
+HOST_PORT=8090 docker compose up --build
+```
+
+En PowerShell:
+
+```bash
+$env:HOST_PORT=8090; docker compose up --build
+```
+
+> **Por qué `HOST_PORT` y no `PORT`.** Compose interpola `${...}` desde el shell o desde un
+> archivo `.env`, **no desde `env_file`**. Si el mapeo usara `${PORT}`, cambiar `PORT` en
+> `.env.docker` movería el puerto del proceso dentro del contenedor pero no el publicado, y la
+> API quedaría inalcanzable desde el host.
+
+Ver que responde:
 
 ```bash
 curl http://localhost:8080/api/health

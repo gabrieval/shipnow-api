@@ -27,8 +27,14 @@ services:
     environment:
       # El host de Mongo es el nombre del servicio dentro de la red de Compose.
       MONGODB_URI: mongodb://mongo:27017/shipnow
+      # El puerto INTERNO se fija aca a proposito. Compose interpola `${...}` desde
+      # el shell o un `.env`, NO desde `env_file`: si se dejara `${PORT}` en el
+      # mapeo, cambiar PORT en .env.docker movia el puerto del proceso pero no el
+      # publicado, y la API quedaba inalcanzable desde el host.
+      PORT: 8080
     ports:
-      - '${PORT:-8080}:${PORT:-8080}'
+      # Solo el puerto del HOST es configurable, con HOST_PORT (por defecto 8080).
+      - '${HOST_PORT:-8080}:8080'
     depends_on:
       mongo:
         condition: service_healthy
