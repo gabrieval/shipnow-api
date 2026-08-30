@@ -6,11 +6,16 @@
  * puede pasar a cualquier otro y un pedido cancelado no vuelve atras.
  */
 const orderRepository = require('../repositories/order.repository');
+const userRepository = require('../repositories/user.repository');
+const productRepository = require('../repositories/product.repository');
 const {
   ForbiddenRoleError,
   OrderNotFoundError,
   InvalidOrderStatusError,
   InvalidOrderPriorityError,
+  ProductNotFoundError,
+  InsufficientStockError,
+  UserNotFoundError,
   ValidationError,
 } = require('../errors');
 const { ORDER_STATUS, ORDER_PRIORITY, USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
@@ -32,8 +37,10 @@ const ALLOWED_TRANSITIONS = Object.freeze({
 });
 
 class OrderService {
-  constructor(repository = orderRepository) {
+  constructor(repository = orderRepository, users = userRepository, products = productRepository) {
     this.repository = repository;
+    this.userRepository = users;
+    this.productRepository = products;
   }
 
   // --- Helpers de dominio --------------------------------------------------
@@ -117,6 +124,123 @@ class OrderService {
     const order = await this.repository.getById(id);
     if (!order) throw new OrderNotFoundError(id);
     return order;
+  }
+
+  /**
+   * Alta de pedido.
+   *
+   * Es el caso de uso mas pesado del service porque cruza tres entidades:
+   *  - El usuario tiene que existir.
+   *  - Cada producto tiene que existir y tener stock suficiente.
+   *  - El total NO llega del cliente: se calcula con el precio vigente de cada
+   *    producto al momento de la compra.
+   *
+   * El stock se descuenta de forma atomica producto por producto. Si alguno
+   * falla a mitad de camino se devuelven los ya descontados, para no dejar el
+   * catalogo inconsistente por un pedido que nunca se creo.
+   *
+   * @param {object} payload datos crudos del request
+   */
+  async create(payload = {}) {
+    const { user, items, shippingAddress, priority, notes } = payload;
+
+    // --- Validacion de forma ---
+    const missing = ['user', 'items', 'shippingAddress'].filter((field) => payload[field] === undefined);
+    if (missing.length > 0) {
+      throw new ValidationError(
+        missing.map((field) => ({ field, message: 'Es obligatorio' })),
+        `Faltan campos obligatorios: ${missing.join(', ')}`
+      );
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new ValidationError([{ field: 'items', message: 'Debe ser un array con al menos un item' }]);
+    }
+
+    for (const [index, item] of items.entries()) {
+      if (!item || item.product === undefined) {
+        throw new ValidationError([{ field: `items[${index}].product`, message: 'Es obligatorio' }]);
+      }
+      const quantity = Number(item.quantity);
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        throw new ValidationError([
+          { field: `items[${index}].quantity`, message: 'Debe ser un entero mayor a 0', received: item.quantity },
+        ]);
+      }
+    }
+
+    for (const field of ['street', 'city', 'country']) {
+      if (!shippingAddress?.[field]) {
+        throw new ValidationError([{ field: `shippingAddress.${field}`, message: 'Es obligatorio' }]);
+      }
+    }
+
+    if (priority !== undefined) this.#assertValidPriority(priority);
+
+    // --- Validacion contra el dominio ---
+    const owner = await this.userRepository.getById(user);
+    if (!owner) throw new UserNotFoundError(user);
+
+    const resolved = [];
+    for (const item of items) {
+      const product = await this.productRepository.getById(item.product);
+      if (!product) throw new ProductNotFoundError(item.product);
+
+      const quantity = Number(item.quantity);
+      if (product.stock < quantity) {
+        throw new InsufficientStockError({ requested: quantity, available: product.stock });
+      }
+
+      resolved.push({
+        product: product._id,
+        title: product.title,
+        quantity,
+        unitPrice: product.price,
+        subtotal: Number((product.price * quantity).toFixed(2)),
+      });
+    }
+
+    // --- Descuento de stock con compensacion si algo falla ---
+    const descontados = [];
+    try {
+      for (const item of resolved) {
+        const updated = await this.productRepository.adjustStock(item.product, -item.quantity);
+        if (!updated) throw new InsufficientStockError({ requested: item.quantity });
+        descontados.push(item);
+      }
+    } catch (error) {
+      for (const item of descontados) {
+        await this.productRepository.adjustStock(item.product, item.quantity);
+      }
+      logger.warning('Se revirtio el descuento de stock de un pedido que no se pudo crear', {
+        revertidos: descontados.length,
+        motivo: error.message,
+      });
+      throw error;
+    }
+
+    const total = Number(resolved.reduce((acc, item) => acc + item.subtotal, 0).toFixed(2));
+
+    const created = await this.repository.create({
+      code: this.#generateCode(),
+      user: owner._id,
+      items: resolved,
+      total,
+      status: ORDER_STATUS.PENDING,
+      priority: priority ?? ORDER_PRIORITY.NORMAL,
+      shippingAddress,
+      notes: notes ?? '',
+    });
+
+    logger.info('Pedido creado', { code: created.code, usuario: owner.email, items: resolved.length, total });
+
+    return created;
+  }
+
+  /** Codigo legible y unico para el pedido. */
+  #generateCode() {
+    const random = Math.random().toString(36).slice(2, 7).toUpperCase();
+    return `ORD-${Date.now().toString(36).toUpperCase()}-${random}`;
   }
 
   /** Avance de estado del pedido. Solo ADMIN, y solo por transiciones validas. */

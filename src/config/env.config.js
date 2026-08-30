@@ -8,9 +8,17 @@
 const path = require('path');
 const dotenv = require('dotenv');
 
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
-
 const VALID_NODE_ENVS = ['development', 'production', 'test'];
+
+/**
+ * El entorno de testing tiene su propio archivo de variables, para no correr
+ * nunca los tests contra la base de desarrollo. `NODE_ENV` se fija desde el
+ * script de npm (`cross-env NODE_ENV=test`) ANTES de que se cargue el archivo:
+ * por eso se puede decidir aca cual leer.
+ */
+const ENV_FILE = process.env.NODE_ENV === 'test' ? '.env.test' : '.env';
+
+dotenv.config({ path: path.resolve(__dirname, '../../', ENV_FILE) });
 
 /** Acumula todos los problemas encontrados para reportarlos juntos. */
 const errors = [];
@@ -24,7 +32,7 @@ function required(key) {
   const value = process.env[key];
 
   if (value === undefined || String(value).trim() === '') {
-    errors.push(`- ${key}: falta definirla en el archivo .env`);
+    errors.push(`- ${key}: falta definirla en el archivo ${ENV_FILE}`);
     return undefined;
   }
 
@@ -84,8 +92,8 @@ if (errors.length > 0) {
       '',
       ...errors,
       '',
-      'Solucion: copia el archivo .env.example como .env y completa los valores.',
-      '  cp .env.example .env   (Windows: copy .env.example .env)',
+      `Solucion: copia el archivo ${ENV_FILE}.example como ${ENV_FILE} y completa los valores.`,
+      `  cp ${ENV_FILE}.example ${ENV_FILE}   (Windows: copy ${ENV_FILE}.example ${ENV_FILE})`,
       '',
     ].join('\n')
   );
@@ -93,6 +101,7 @@ if (errors.length > 0) {
 
 /** Objeto de configuracion ya validado. El resto de la app consume solo esto. */
 const config = Object.freeze({
+  envFile: ENV_FILE,
   nodeEnv,
   isProduction: nodeEnv === 'production',
   isTest: nodeEnv === 'test',

@@ -1,0 +1,9 @@
+{
+  "spec": "test/**/*.test.js",
+  "require": "test/helpers/root-hooks.js",
+  "timeout": 20000,
+  "slow": 2000,
+  "exit": true,
+  "recursive": true,
+  "reporter": "spec"
+}

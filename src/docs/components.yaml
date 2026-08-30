@@ -265,6 +265,43 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
+    OrderCreateInput:
+      type: object
+      required: [user, items, shippingAddress]
+      properties:
+        user:
+          type: string
+          description: Id de un usuario existente.
+          example: 68f1a2b3c4d5e6f7a8b9c0d1
+        items:
+          type: array
+          minItems: 1
+          description: >
+            Solo se envia el id del producto y la cantidad. El titulo, el precio unitario y
+            el subtotal los resuelve el Service con el precio vigente del catalogo.
+          items:
+            type: object
+            required: [product, quantity]
+            properties:
+              product:
+                type: string
+                example: 68f1a2b3c4d5e6f7a8b9c0d2
+              quantity:
+                type: integer
+                minimum: 1
+                example: 2
+        shippingAddress:
+          allOf:
+            - $ref: '#/components/schemas/ShippingAddress'
+          description: '`street`, `city` y `country` son obligatorios.'
+        priority:
+          type: string
+          enum: [low, normal, high, urgent]
+          default: normal
+        notes:
+          type: string
+          example: Tocar timbre dos veces
+
     Delivery:
       type: object
       description: >

@@ -1,6 +1,6 @@
-# ShipNow API — Arquitectura por capas, mocking, errores, logging y documentación
+# ShipNow API — Arquitectura por capas, mocking, errores, logging, docs y tests
 
-Pre-entregas **Módulo 1** a **Módulo 5** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
+Pre-entregas **Módulo 1** a **Módulo 6** — *Programación Backend III: Testing y Escalabilidad* (CoderHouse).
 
 📖 **Documentación interactiva (Swagger UI): [`http://localhost:8080/api/docs`](http://localhost:8080/api/docs)**
 
@@ -9,13 +9,15 @@ API de ShipNow refactorizada desde un modelo monolítico a una arquitectura por 
 un diccionario centralizado de constantes del dominio, un módulo de mocking que genera
 usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
 que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
-registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI.
+registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI y cubierta por
+una suite de **129 tests funcionales** con Mocha, Chai y Supertest.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
 - **Módulo 2** — router `/api/mocks` con generación de datos simulados y carga controlada en MongoDB.
 - **Módulo 3** — capa centralizada de manejo de errores: errores personalizados, diccionario y middleware global.
 - **Módulo 4** — logging y monitoreo básico con Winston: seis niveles, persistencia en archivos con rotación y endpoint de prueba.
 - **Módulo 5** — documentación de la API con Swagger/OpenAPI 3.0 en `/api/docs`.
+- **Módulo 6** — testing funcional con Mocha, Chai y Supertest, con entorno de testing aislado.
 
 ---
 
@@ -177,6 +179,20 @@ src/
 ├── app.js                 # arma la app Express (no abre puerto)
 └── server.js              # valida config -> conecta DB -> escucha
 
+test/                      # suite de tests funcionales (Módulo 6)
+├── helpers/
+│   ├── database.js        # MongoDB en memoria + limpieza de colecciones
+│   ├── root-hooks.js      # conectar / limpiar / desconectar, para toda la suite
+│   ├── request.js         # cliente Supertest sobre la app de Express
+│   ├── fixtures.js        # datos de prueba controlados y repetibles
+│   └── assertions.js      # aserciones sobre el contrato de la API
+├── users.test.js
+├── products.test.js
+├── orders.test.js
+├── deliveries.test.js
+├── mocks.test.js
+└── utilities.test.js      # logger, health, Swagger y rutas inexistentes
+
 logs/                      # archivos generados por Winston (ignorados en Git)
 ├── README.md              # lo único versionado de esta carpeta
 ├── error-YYYY-MM-DD.log
@@ -308,6 +324,155 @@ entregada*.
 
 Además, `assignedAt` solo existe si hay repartidor y `deliveredAt` solo si la entrega llegó a
 estado `delivered`.
+
+---
+
+## Testing
+
+La suite son **129 tests funcionales** que golpean la API por HTTP, de punta a punta:
+router → controller → service → repository → MongoDB.
+
+### Herramientas
+
+| Herramienta | Para qué |
+| --- | --- |
+| **Mocha** | Organiza y ejecuta los tests (`describe` / `it`) |
+| **Chai** | Aserciones, con la interfaz `expect` |
+| **Supertest** | Hace las peticiones HTTP contra la app de Express |
+| **mongodb-memory-server** | Levanta un MongoDB en memoria para que los tests no toquen ninguna base real |
+| **cross-env** | Fija `NODE_ENV=test` de forma que funcione igual en Windows, Linux y Mac |
+
+### Cómo ejecutarlos
+
+No hace falta tener MongoDB instalado ni corriendo:
+
+```bash
+npm test
+```
+
+La primera ejecución descarga el binario de MongoDB en memoria (una sola vez) y puede tardar
+un poco más. Después, la suite completa corre en unos 4 segundos.
+
+Para correr un solo archivo:
+
+```bash
+npx cross-env NODE_ENV=test mocha --spec test/orders.test.js
+```
+
+Para re-ejecutar automáticamente al guardar cambios:
+
+```bash
+npm run test:watch
+```
+
+Y para correr contra una base de MongoDB real en vez de la de memoria:
+
+```bash
+npm run test:db
+```
+
+### ¿Hace falta una base de datos de testing?
+
+**No para `npm test`**: levanta MongoDB en memoria, que se crea al empezar y se destruye al
+terminar. Nunca toca la base de desarrollo.
+
+Sí para `npm run test:db`, que usa la `MONGODB_URI` de `.env.test`. Esa URI **tiene que
+apuntar a una base exclusiva de tests** (por ejemplo `shipnow_test`), porque la suite borra
+las colecciones después de cada test.
+
+### Variables de entorno
+
+El entorno de testing tiene su propio archivo. `src/config/env.config.js` elige cuál cargar
+según `NODE_ENV`, que fija el script de npm:
+
+```
+NODE_ENV=test   ->  .env.test
+cualquier otro  ->  .env
+```
+
+Para prepararlo:
+
+```bash
+cp .env.test.example .env.test
+```
+
+En Windows:
+
+```bash
+copy .env.test.example .env.test
+```
+
+| Variable | Valor sugerido | Nota |
+| --- | --- | --- |
+| `NODE_ENV` | `test` | Silencia la consola y desactiva la escritura de logs a disco |
+| `PORT` | `8081` | Los tests no abren el puerto, pero la validación de entorno lo exige |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017/shipnow_test` | Solo se usa con `npm run test:db` |
+| `DEFAULT_PAGE_SIZE` | `10` | |
+| `BCRYPT_SALT_ROUNDS` | `4` | Bajo a propósito: con 10 los tests se vuelven lentos |
+
+`.env.test` está en el `.gitignore`; lo que se versiona es `.env.test.example`.
+
+### Qué módulos están cubiertos
+
+| Archivo | Tests | Cubre |
+| --- | --- | --- |
+| `users.test.js` | 26 | Listado, registro, login, consulta por id, cambio de rol y baja |
+| `products.test.js` | 19 | Catálogo, disponibles, alta, detalle, descuento de stock, actualización y baja |
+| `orders.test.js` | 28 | Creación, listado, consulta por id y transiciones de estado |
+| `deliveries.test.js` | 14 | Listado, detalle, asignación de repartidor y cambio de estado |
+| `mocks.test.js` | 28 | Generación sin persistir, carga en MongoDB, cantidades inválidas y limpieza |
+| `utilities.test.js` | 14 | Logger, health, Swagger y rutas inexistentes |
+
+### Qué se valida en cada test
+
+No alcanza con que el endpoint "responda". Cada test comprueba **status + estructura del
+body**, usando las aserciones compartidas de `test/helpers/assertions.js`:
+
+- **Casos exitosos** — que la respuesta tenga la forma `{ status: "success", payload }`, que
+  no traiga bloque `error`, y que el payload tenga las propiedades importantes: un pedido con
+  sus items, `total` igual a la suma de los subtotales y cada `subtotal` igual a
+  `precio × cantidad`; un usuario **sin** el campo `password`; un producto con el `status`
+  coherente con su stock; una entrega con repartidor si su estado lo exige.
+- **Casos de error** — que respeten el formato del Módulo 3:
+  `{ status: "error", error: { code, message, details? }, timestamp, path }`, con el `code`
+  exacto que corresponde, un `timestamp` que sea una fecha válida y sin bloque `payload`.
+
+Ejemplos de errores cubiertos: datos incompletos (`VALIDATION_ERROR`), recurso inexistente
+(`ORDER_NOT_FOUND`, `USER_NOT_FOUND`, `PRODUCT_NOT_FOUND`, `DELIVERY_NOT_FOUND`), estado
+inválido (`INVALID_ORDER_STATUS`, `INVALID_DELIVERY_STATUS`), permisos (`FORBIDDEN_ROLE`),
+credenciales (`INVALID_CREDENTIALS`), stock insuficiente (`INSUFFICIENT_STOCK`), cantidades
+inválidas en mocks (`INVALID_MOCK_COUNT`) y ruta inexistente (`ROUTE_NOT_FOUND`).
+
+### Datos de prueba y limpieza
+
+Ningún test depende de datos cargados a mano ni del estado que dejó otro:
+
+- Cada test **crea lo que necesita** a través de la propia API, con los fixtures de
+  `test/helpers/fixtures.js` (`createUser`, `createProduct`, `createOrder`, `generateMockData`).
+  Los emails y códigos llevan un sufijo único para no chocar contra los índices.
+- Un hook `afterEach` **vacía todas las colecciones** después de cada test.
+- Al terminar la suite se borra la base entera y se apaga el servidor en memoria.
+
+Esto se verificó de dos formas: corriendo cada archivo **aislado** (26 + 19 + 28 + 14 + 28 + 14
+= 129) y corriendo la suite completa en **orden invertido**. En ambos casos pasan los 129.
+
+### Coherencia con Swagger
+
+`utilities.test.js` recorre la especificación OpenAPI y, para cada endpoint que documenta un
+`404`, comprueba contra la API que efectivamente lo devuelva con el `code` correcto. Si alguien
+documenta un comportamiento que la API no tiene, el test falla.
+
+### Por qué la app está separada del servidor
+
+`src/app.js` construye la app de Express y `src/server.js` es el único que abre el puerto.
+Gracias a eso, Supertest recibe la app directamente:
+
+```js
+const request = supertest(createApp());
+```
+
+No hay que levantar un servidor a mano ni ocuparse de cerrarlo: Supertest abre un puerto
+efímero por petición y lo libera solo.
 
 ---
 
@@ -797,6 +962,7 @@ Query params del listado: `?page=1&limit=10&category=electronics&status=availabl
 | Método | Ruta                    | Permiso | Descripción                                              |
 | ------ | ----------------------- | ------- | -------------------------------------------------------- |
 | GET    | `/orders`               | público | Listado paginado + total facturado                       |
+| POST   | `/orders`               | público | Crea un pedido: valida stock, descuenta y calcula el total |
 | GET    | `/orders/:oid`          | público | Detalle, con usuario e items resueltos                   |
 | PATCH  | `/orders/:oid/status`   | ADMIN   | Avanza el estado respetando las transiciones permitidas  |
 
@@ -1013,6 +1179,23 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 ---
 
 ## Cumplimiento de los criterios de aceptación
+
+### Módulo 6 — Testing funcional
+
+| Criterio | Dónde se verifica |
+| --- | --- |
+| Entorno de testing separado, con variables propias | `.env.test` (ignorado) + `.env.test.example`; `env.config.js` lo elige según `NODE_ENV` |
+| Base de datos separada | MongoDB en memoria por defecto; `npm run test:db` para una base real dedicada |
+| Mocha, Chai y Supertest instalados, con script de test | `devDependencies` + `npm test` |
+| App separada del levantamiento del servidor | `src/app.js` exporta la app; solo `src/server.js` abre el puerto |
+| Tests de los endpoints principales | Users, Products, Orders, Deliveries, Mocks, Logger y Swagger |
+| Casos exitosos cubiertos | Listados, creación de pedido, generación de mocks, logger y `/api/docs` |
+| Casos de error cubiertos | Datos incompletos, recurso inexistente, estado inválido, cantidades inválidas y ruta inexistente |
+| Se valida status **y** estructura del body | Aserciones compartidas en `test/helpers/assertions.js` |
+| Datos controlados y repetibles | Fixtures que crean todo vía API, con sufijos únicos |
+| Estrategia de limpieza | `afterEach` vacía las colecciones; al final se borra la base |
+| Tests independientes del orden | Verificado corriendo cada archivo aislado y la suite en orden invertido |
+| Coherencia con Swagger | Los `404` documentados tienen su test contra la API real |
 
 ### Módulo 5 — Documentación con Swagger
 
