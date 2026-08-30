@@ -26,9 +26,27 @@ mongoose.connection.on('disconnected', () => logger.warning('Se perdio la conexi
 mongoose.connection.on('reconnected', () => logger.info('Se restablecio la conexion con MongoDB'));
 mongoose.connection.on('error', (error) => logger.error('Error de la conexion con MongoDB', { motivo: error.message }));
 
+/**
+ * Estado legible de la conexion con MongoDB.
+ *
+ * Vive aca porque `db.config.js` ya es una de las capas que conoce Mongoose: el
+ * health check lo necesita, pero un controller no deberia importar el driver
+ * solo para leer un numero.
+ */
+const ESTADOS_DE_CONEXION = Object.freeze({
+  0: 'disconnected',
+  1: 'connected',
+  2: 'connecting',
+  3: 'disconnecting',
+});
+
+function getConnectionState() {
+  return ESTADOS_DE_CONEXION[mongoose.connection.readyState] ?? 'unknown';
+}
+
 async function disconnectDB() {
   await mongoose.disconnect();
   logger.info('Conexion con MongoDB cerrada');
 }
 
-module.exports = { connectDB, disconnectDB };
+module.exports = { connectDB, disconnectDB, getConnectionState };

@@ -6,7 +6,16 @@
  * logger.
  */
 const config = require('./env.config');
-const { connectDB, disconnectDB } = require('./db.config');
+const { connectDB, disconnectDB, getConnectionState } = require('./db.config');
 const { logger, LEVELS, LOGS_DIR, logLoggerSetup } = require('./logger.config');
 
-module.exports = { config, connectDB, disconnectDB, logger, LEVELS, LOGS_DIR, logLoggerSetup };
+module.exports = {
+  config,
+  connectDB,
+  disconnectDB,
+  getConnectionState,
+  logger,
+  LEVELS,
+  LOGS_DIR,
+  logLoggerSetup,
+};
