@@ -18,6 +18,7 @@ const tags = [
   { name: 'Products', description: 'Catalogo de ShipNow: alta, listado, stock y baja logica' },
   { name: 'Orders', description: 'Pedidos: consulta y avance del ciclo de vida' },
   { name: 'Deliveries', description: 'Entregas: consulta, cambio de estado y asignacion de repartidor' },
+  { name: 'Uploads', description: 'Carga de documentos de usuario y comprobantes de pedidos y entregas' },
   { name: 'Mocks', description: 'Generacion de datos simulados y carga controlada de datos de prueba' },
   { name: 'Logger', description: 'Herramientas internas de verificacion: logger y estado de la API' },
 ];

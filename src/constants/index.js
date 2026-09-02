@@ -82,6 +82,54 @@ const MOCK_LIMITS = Object.freeze({
   DEFAULT_PASSWORD: 'mock1234',
 });
 
+/**
+ * Tipos de documento que un usuario puede adjuntar a su perfil.
+ * Cada uno se guarda en su propia subcarpeta dentro de `uploads/documents/`.
+ */
+const DOCUMENT_TYPES = Object.freeze({
+  ID_CARD: 'id_card',
+  DRIVER_LICENSE: 'driver_license',
+  INSURANCE: 'insurance',
+  TAX_ID: 'tax_id',
+  OTHER: 'other',
+});
+
+/** A que entidad esta asociado un archivo. Se guarda junto a los metadatos. */
+const FILE_OWNER_TYPES = Object.freeze({
+  USER: 'user',
+  ORDER: 'order',
+  DELIVERY: 'delivery',
+});
+
+/**
+ * Reglas de la carga de archivos. Las consume `config/multer.config.js`:
+ * ni los routers ni los services deciden nada de esto.
+ */
+const UPLOAD_RULES = Object.freeze({
+  /** Tamano maximo por archivo, en bytes (5 MB). */
+  MAX_FILE_SIZE: 5 * 1024 * 1024,
+  /** Un solo archivo por peticion. */
+  MAX_FILES: 1,
+  /** Nombre del campo del formulario en cada endpoint. */
+  FIELDS: Object.freeze({
+    USER_DOCUMENT: 'document',
+    RECEIPT: 'receipt',
+  }),
+  /** Tipos MIME admitidos, con la extension que se les asigna al guardarlos. */
+  ALLOWED_MIME_TYPES: Object.freeze({
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'application/pdf': '.pdf',
+  }),
+  /** Subcarpetas de `uploads/`. */
+  FOLDERS: Object.freeze({
+    DOCUMENTS: 'documents',
+    ORDER_RECEIPTS: 'receipts/orders',
+    DELIVERY_RECEIPTS: 'receipts/deliveries',
+  }),
+});
+
 /** Codigos HTTP usados por los controllers. Evita numeros magicos en las respuestas. */
 const HTTP_STATUS = Object.freeze({
   OK: 200,
@@ -92,6 +140,8 @@ const HTTP_STATUS = Object.freeze({
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
   UNPROCESSABLE_ENTITY: 422,
   INTERNAL_SERVER_ERROR: 500,
 });
@@ -110,6 +160,9 @@ const SORT_ORDER = Object.freeze({
 
 module.exports = {
   USER_ROLES,
+  DOCUMENT_TYPES,
+  FILE_OWNER_TYPES,
+  UPLOAD_RULES,
   PRODUCT_STATUS,
   PRODUCT_CATEGORIES,
   ORDER_STATUS,

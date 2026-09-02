@@ -1,0 +1,328 @@
+# Carga de archivos: documentos de usuario y comprobantes.
+# Todos estos endpoints reciben `multipart/form-data`, no JSON.
+
+paths:
+  /users/{uid}/documents:
+    post:
+      tags: [Uploads]
+      summary: Adjunta un documento a un usuario
+      description: >
+        Sube un documento (DNI, licencia, seguro...) y lo asocia al usuario.
+
+
+        **La peticion va como `multipart/form-data`, no como JSON.**
+
+
+        - Campo del archivo: **`document`**
+
+        - Campo de texto obligatorio: **`documentType`**
+
+
+        El archivo se guarda en `uploads/documents/<documentType>/` con un nombre generado por
+        el servidor. En la base **solo se guardan los metadatos**: el binario nunca entra a
+        MongoDB.
+
+
+        Si el usuario no existe o el tipo de documento es invalido, el archivo ya subido se
+        borra del disco para no dejar archivos huerfanos.
+
+
+        Formatos aceptados: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`.
+        Tamano maximo: **5 MB**.
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          description: Id del usuario.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d1 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [document, documentType]
+              properties:
+                document:
+                  type: string
+                  format: binary
+                  description: El archivo a subir.
+                documentType:
+                  type: string
+                  description: Tipo de documento. Determina la subcarpeta donde se guarda.
+                  enum: [id_card, driver_license, insurance, tax_id, other]
+                  example: id_card
+      responses:
+        '201':
+          description: Documento cargado y asociado al usuario.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          user:
+                            $ref: '#/components/schemas/User'
+                          document:
+                            $ref: '#/components/schemas/FileMetadata'
+        '400':
+          description: >
+            No se envio archivo (`FILE_REQUIRED`), falta el `documentType` (`VALIDATION_ERROR`),
+            el tipo de documento no es valido (`INVALID_DOCUMENT_TYPE`) o el campo del
+            formulario no es el esperado (`UNEXPECTED_FILE_FIELD`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sinArchivo:
+                  summary: No se envio ningun archivo
+                  value:
+                    status: error
+                    error:
+                      code: FILE_REQUIRED
+                      message: 'No se recibio ningun archivo en el campo "document"'
+                      details:
+                        field: document
+                        sugerencia: Enviar la peticion como multipart/form-data
+                    timestamp: '2026-08-09T11:15:13.713Z'
+                    path: POST /api/users/68f1a2b3c4d5e6f7a8b9c0d1/documents
+                tipoDocumentoInvalido:
+                  summary: Tipo de documento fuera del enum
+                  value:
+                    status: error
+                    error:
+                      code: INVALID_DOCUMENT_TYPE
+                      message: El tipo de documento enviado no es valido
+                      details:
+                        received: pasaporte-galactico
+                        allowed: [id_card, driver_license, insurance, tax_id, other]
+                    timestamp: '2026-08-09T11:15:13.713Z'
+                    path: POST /api/users/68f1a2b3c4d5e6f7a8b9c0d1/documents
+        '404':
+          description: El usuario no existe (`USER_NOT_FOUND`). El archivo subido se descarta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/InvalidFileType'
+        '500':
+          description: No se pudo guardar el archivo en el servidor (`FILE_STORAGE_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{oid}/receipt:
+    post:
+      tags: [Uploads]
+      summary: Adjunta un comprobante de pago a un pedido
+      description: >
+        Sube un comprobante y lo asocia al pedido.
+        **`multipart/form-data`**, campo del archivo: **`receipt`**.
+
+
+        Se guarda en `uploads/receipts/orders/`. Un pedido puede acumular varios comprobantes.
+      parameters:
+        - in: path
+          name: oid
+          required: true
+          description: Id del pedido.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d3 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [receipt]
+              properties:
+                receipt:
+                  type: string
+                  format: binary
+                  description: Comprobante en imagen o PDF.
+      responses:
+        '201':
+          description: Comprobante cargado y asociado al pedido.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          order:
+                            $ref: '#/components/schemas/Order'
+                          receipt:
+                            $ref: '#/components/schemas/FileMetadata'
+        '400':
+          description: No se envio archivo (`FILE_REQUIRED`) o el campo no es el esperado (`UNEXPECTED_FILE_FIELD`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: El pedido no existe (`ORDER_NOT_FOUND`). El archivo subido se descarta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/InvalidFileType'
+        '500':
+          description: No se pudo guardar el archivo (`FILE_STORAGE_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /deliveries/{did}/receipt:
+    post:
+      tags: [Uploads]
+      summary: Adjunta un comprobante de entrega
+      description: >
+        Sube la constancia de que el pedido fue entregado (una firma, una foto) y la asocia a
+        la entrega. **`multipart/form-data`**, campo del archivo: **`receipt`**.
+
+
+        Se guarda en `uploads/receipts/deliveries/`.
+      parameters:
+        - in: path
+          name: did
+          required: true
+          description: Id de la entrega.
+          schema: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d4 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [receipt]
+              properties:
+                receipt:
+                  type: string
+                  format: binary
+                  description: Comprobante en imagen o PDF.
+      responses:
+        '201':
+          description: Comprobante cargado y asociado a la entrega.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        type: object
+                        properties:
+                          delivery:
+                            $ref: '#/components/schemas/Delivery'
+                          receipt:
+                            $ref: '#/components/schemas/FileMetadata'
+        '400':
+          description: No se envio archivo (`FILE_REQUIRED`) o el campo no es el esperado (`UNEXPECTED_FILE_FIELD`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: La entrega no existe (`DELIVERY_NOT_FOUND`). El archivo subido se descarta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/InvalidFileType'
+        '500':
+          description: No se pudo guardar el archivo (`FILE_STORAGE_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    FileMetadata:
+      type: object
+      description: >
+        Metadatos de un archivo subido. Es lo UNICO que se guarda en MongoDB: el archivo en si
+        vive en el sistema de archivos del servidor.
+      properties:
+        _id: { type: string, example: 68f1a2b3c4d5e6f7a8b9c0d9 }
+        originalName:
+          type: string
+          description: Nombre con el que el cliente subio el archivo.
+          example: dni-frente.png
+        fileName:
+          type: string
+          description: Nombre generado por el servidor, unico dentro de su carpeta.
+          example: 1754741713000-9f3a2b7c1d4e.png
+        path:
+          type: string
+          description: Ruta relativa a la carpeta de uploads. Nunca una ruta absoluta del servidor.
+          example: documents/id_card/1754741713000-9f3a2b7c1d4e.png
+        mimeType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp, application/pdf]
+          example: image/png
+        size:
+          type: integer
+          description: Tamano en bytes.
+          example: 245678
+        documentType:
+          type: string
+          description: Solo presente en documentos de usuario; los comprobantes no lo llevan.
+          enum: [id_card, driver_license, insurance, tax_id, other]
+          example: id_card
+        uploadedAt: { type: string, format: date-time }
+
+  responses:
+    FileTooLarge:
+      description: El archivo supera el tamano maximo de 5 MB (`FILE_TOO_LARGE`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: FILE_TOO_LARGE
+              message: El archivo supera el tamano maximo permitido de 5 MB
+              details:
+                maxBytes: 5242880
+                maxMb: 5
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/users/68f1a2b3c4d5e6f7a8b9c0d1/documents
+
+    InvalidFileType:
+      description: El tipo de archivo no esta permitido (`INVALID_FILE_TYPE`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            error:
+              code: INVALID_FILE_TYPE
+              message: El tipo de archivo no esta permitido
+              details:
+                received: application/x-sh
+                allowed: [image/jpeg, image/png, image/webp, application/pdf]
+            timestamp: '2026-08-09T11:15:13.713Z'
+            path: POST /api/users/68f1a2b3c4d5e6f7a8b9c0d1/documents

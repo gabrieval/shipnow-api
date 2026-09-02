@@ -7,6 +7,7 @@
  */
 const bcrypt = require('bcrypt');
 const userRepository = require('../repositories/user.repository');
+const fileService = require('./file.service');
 const {
   ValidationError,
   ForbiddenRoleError,
@@ -15,8 +16,16 @@ const {
   InvalidCredentialsError,
   InvalidRoleError,
   LastAdminError,
+  InvalidDocumentTypeError,
 } = require('../errors');
-const { USER_ROLES, PAGINATION, SORT_ORDER } = require('../constants');
+const {
+  USER_ROLES,
+  DOCUMENT_TYPES,
+  FILE_OWNER_TYPES,
+  UPLOAD_RULES,
+  PAGINATION,
+  SORT_ORDER,
+} = require('../constants');
 const { config, logger } = require('../config');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -247,6 +256,44 @@ class UserService {
     const deleted = await this.repository.softDelete(id);
     if (!deleted) throw new UserNotFoundError(id);
     return this.#withFullName(deleted);
+  }
+
+  /**
+   * Adjunta un documento al usuario.
+   *
+   * Multer ya guardo el archivo, asi que si algo falla despues (el usuario no
+   * existe, el tipo de documento es invalido) hay que borrarlo: de eso se ocupa
+   * `fileService.withRollback`.
+   *
+   * @param {string} id id del usuario
+   * @param {object} file `req.file` de Multer
+   * @param {string} documentType tipo de documento, de DOCUMENT_TYPES
+   */
+  async uploadDocument(id, file, documentType) {
+    fileService.assertFileExists(file, UPLOAD_RULES.FIELDS.USER_DOCUMENT);
+
+    return fileService.withRollback(file, async () => {
+      if (documentType === undefined || String(documentType).trim() === '') {
+        throw new ValidationError([{ field: 'documentType', message: 'Es obligatorio' }]);
+      }
+
+      if (!Object.values(DOCUMENT_TYPES).includes(documentType)) {
+        throw new InvalidDocumentTypeError(documentType, Object.values(DOCUMENT_TYPES));
+      }
+
+      const user = await this.repository.getById(id);
+      if (!user) throw new UserNotFoundError(id);
+
+      const metadata = fileService.buildMetadata(file, { documentType });
+      const updated = await this.repository.addDocument(id, metadata);
+
+      fileService.logUpload({ ownerType: FILE_OWNER_TYPES.USER, ownerId: id, metadata });
+
+      return {
+        user: this.#withFullName(updated),
+        document: updated.documents[updated.documents.length - 1],
+      };
+    });
   }
 
   /**

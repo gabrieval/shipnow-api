@@ -8,6 +8,7 @@
  */
 const deliveryRepository = require('../repositories/delivery.repository');
 const userRepository = require('../repositories/user.repository');
+const fileService = require('./file.service');
 const {
   ForbiddenRoleError,
   DeliveryNotFoundError,
@@ -20,6 +21,8 @@ const {
   DELIVERY_STATUS,
   DELIVERY_STATUS_REQUIRING_COURIER,
   USER_ROLES,
+  FILE_OWNER_TYPES,
+  UPLOAD_RULES,
   PAGINATION,
   SORT_ORDER,
 } = require('../constants');
@@ -129,6 +132,29 @@ class DeliveryService {
     });
 
     return updated;
+  }
+
+  /**
+   * Adjunta un comprobante de entrega (la constancia de que el pedido llego).
+   * Si la entrega no existe, el archivo recien subido se borra.
+   */
+  async uploadReceipt(id, file) {
+    fileService.assertFileExists(file, UPLOAD_RULES.FIELDS.RECEIPT);
+
+    return fileService.withRollback(file, async () => {
+      const delivery = await this.repository.getById(id);
+      if (!delivery) throw new DeliveryNotFoundError(id);
+
+      const metadata = fileService.buildMetadata(file);
+      const updated = await this.repository.addReceipt(id, metadata);
+
+      fileService.logUpload({ ownerType: FILE_OWNER_TYPES.DELIVERY, ownerId: id, metadata });
+
+      return {
+        delivery: updated,
+        receipt: updated.receipts[updated.receipts.length - 1],
+      };
+    });
   }
 
   /** Asigna un repartidor. El usuario elegido tiene que tener rol COURIER. */

@@ -3,11 +3,13 @@
  */
 const deliveryService = require('../services/delivery.service');
 const { success } = require('../utils/apiResponse');
+const { HTTP_STATUS } = require('../constants');
 
 class DeliveryController {
   constructor(service = deliveryService) {
     this.service = service;
     this.getAll = this.getAll.bind(this);
+    this.uploadReceipt = this.uploadReceipt.bind(this);
     this.getById = this.getById.bind(this);
     this.updateStatus = this.updateStatus.bind(this);
     this.assignCourier = this.assignCourier.bind(this);
@@ -16,6 +18,14 @@ class DeliveryController {
   async getAll(req, res, next) {
     try {
       return success(res, await this.service.getAll(req.query));
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async uploadReceipt(req, res, next) {
+    try {
+      return success(res, await this.service.uploadReceipt(req.params.did, req.file), HTTP_STATUS.CREATED);
     } catch (error) {
       return next(error);
     }

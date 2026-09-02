@@ -121,6 +121,32 @@ const ERROR_DICTIONARY = Object.freeze({
     message: 'El estado de entrega enviado no es valido',
   },
 
+  // --- Carga de archivos --------------------------------------------------
+  FILE_REQUIRED: {
+    status: HTTP_STATUS.BAD_REQUEST,
+    message: 'No se recibio ningun archivo',
+  },
+  INVALID_FILE_TYPE: {
+    status: HTTP_STATUS.UNSUPPORTED_MEDIA_TYPE,
+    message: 'El tipo de archivo no esta permitido',
+  },
+  FILE_TOO_LARGE: {
+    status: HTTP_STATUS.PAYLOAD_TOO_LARGE,
+    message: 'El archivo supera el tamano maximo permitido',
+  },
+  UNEXPECTED_FILE_FIELD: {
+    status: HTTP_STATUS.BAD_REQUEST,
+    message: 'El campo del formulario no coincide con el esperado',
+  },
+  INVALID_DOCUMENT_TYPE: {
+    status: HTTP_STATUS.BAD_REQUEST,
+    message: 'El tipo de documento enviado no es valido',
+  },
+  FILE_STORAGE_ERROR: {
+    status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+    message: 'No se pudo guardar el archivo en el servidor',
+  },
+
   // --- Modulo de mocking --------------------------------------------------
   INVALID_MOCK_COUNT: {
     status: HTTP_STATUS.BAD_REQUEST,

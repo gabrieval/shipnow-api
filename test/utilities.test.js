@@ -69,7 +69,7 @@ describe('Swagger - /api/docs', () => {
     const res = await request.get('/api/docs.json');
 
     const tags = res.body.tags.map((t) => t.name);
-    expect(tags).to.include.members(['Users', 'Products', 'Orders', 'Deliveries', 'Mocks', 'Logger']);
+    expect(tags).to.include.members(['Users', 'Products', 'Orders', 'Deliveries', 'Uploads', 'Mocks', 'Logger']);
   });
 
   it('define los schemas reutilizables de las entidades principales', async () => {
@@ -81,9 +81,27 @@ describe('Swagger - /api/docs', () => {
       'Order',
       'OrderItem',
       'Delivery',
+      'FileMetadata',
       'SuccessResponse',
       'ErrorResponse'
     );
+  });
+
+  it('documenta los endpoints de carga como multipart/form-data', async () => {
+    const res = await request.get('/api/docs.json');
+
+    const rutasDeCarga = ['/users/{uid}/documents', '/orders/{oid}/receipt', '/deliveries/{did}/receipt'];
+
+    rutasDeCarga.forEach((ruta) => {
+      const definicion = res.body.paths[ruta]?.post;
+      expect(definicion, `falta documentar POST ${ruta}`).to.exist;
+      expect(definicion.requestBody.content).to.have.property('multipart/form-data');
+      expect(definicion.tags).to.include('Uploads');
+
+      const propiedades = definicion.requestBody.content['multipart/form-data'].schema.properties;
+      const campoBinario = Object.values(propiedades).find((p) => p.format === 'binary');
+      expect(campoBinario, `${ruta} deberia declarar un campo de archivo`).to.exist;
+    });
   });
 });
 

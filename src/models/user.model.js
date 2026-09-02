@@ -7,6 +7,7 @@
  */
 const mongoose = require('mongoose');
 const { USER_ROLES } = require('../constants');
+const fileSchema = require('./file.schema');
 
 const userSchema = new mongoose.Schema(
   {
@@ -39,6 +40,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: Object.values(USER_ROLES),
       default: USER_ROLES.USER,
+    },
+    /**
+     * Documentos adjuntos del usuario (DNI, licencia, seguro...).
+     * Solo METADATOS: el archivo vive en la carpeta `uploads/`.
+     */
+    documents: {
+      type: [fileSchema],
+      default: [],
     },
     // Marca de dato generado por el modulo de mocking (ver mock.service.js).
     isMock: {
