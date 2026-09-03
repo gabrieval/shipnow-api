@@ -20,6 +20,10 @@ paths:
 
 
         No recibe parametros, no modifica datos y no toca la base.
+
+
+        **Disponibilidad:** en produccion queda deshabilitado por defecto y responde 404, igual
+        que el modulo de mocks. Se puede encender con `ENABLE_INTERNAL_ENDPOINTS=true`.
       responses:
         '200':
           description: Logs emitidos.
@@ -70,10 +74,19 @@ paths:
   /health:
     get:
       tags: [Logger]
-      summary: Estado de la API (herramienta interna)
+      summary: Estado de la API
       description: >
-        Chequeo de vida. Devuelve el entorno en el que corre la API y hace cuanto esta
-        levantada. Util para confirmar que el servidor responde antes de probar el resto.
+        Chequeo de vida, pensado para orquestadores: Docker lo usa como `HEALTHCHECK` y un
+        balanceador puede consultarlo para saber si la instancia esta sana.
+
+
+        **No expone informacion sensible**: ni la URI de la base, ni variables de entorno, ni
+        rutas del servidor. Solo el estado, el entorno, la version, el uptime, la marca de
+        tiempo y si la conexion con MongoDB esta activa.
+
+
+        A diferencia del resto de las herramientas internas, **sigue disponible en produccion**:
+        apagarlo dejaria al orquestador sin forma de saber si la API responde.
       responses:
         '200':
           description: La API responde.
@@ -92,9 +105,22 @@ paths:
                             type: string
                             enum: [development, production, test]
                             example: development
+                          version:
+                            type: string
+                            description: Version del paquete.
+                            example: 1.0.0
                           uptime:
                             type: number
                             description: Segundos desde el arranque del proceso.
                             example: 42.87
+                          timestamp:
+                            type: string
+                            format: date-time
+                            example: '2026-08-23T22:28:52.091Z'
+                          database:
+                            type: string
+                            description: Estado de la conexion con MongoDB. Nunca la URI.
+                            enum: [connected, connecting, disconnecting, disconnected, unknown]
+                            example: connected
         '500':
           $ref: '#/components/responses/InternalError'

@@ -88,6 +88,19 @@ class ProductRepository {
     return this.model.findOne(filter, PUBLIC_PROJECTION).lean();
   }
 
+  /**
+   * Trae varios productos por id en UNA sola consulta.
+   * Evita el N+1 de pedir producto por producto al armar un pedido.
+   * @returns {Promise<Map<string, object>>} mapa id -> producto, para buscar sin recorrer
+   */
+  async getManyByIds(ids = []) {
+    const validos = ids.filter((id) => this.isValidId(id));
+    if (validos.length === 0) return new Map();
+
+    const docs = await this.model.find(this.#withBaseFilter({ _id: { $in: validos } }), PUBLIC_PROJECTION).lean();
+    return new Map(docs.map((doc) => [String(doc._id), doc]));
+  }
+
   /** Cuenta documentos activos que matcheen el filtro. */
   async countBy(filter = {}) {
     return this.model.countDocuments(this.#withBaseFilter(filter));

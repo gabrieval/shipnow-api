@@ -1,0 +1,45 @@
+# Dependencias: se instalan dentro de la imagen con npm ci
+node_modules
+npm-debug.log*
+
+# Secretos: las variables se pasan en tiempo de ejecucion, nunca dentro de la imagen
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+# Historial de git
+.git
+.gitignore
+.github
+
+# Archivos generados por la aplicacion
+logs
+uploads
+uploads-test
+*.log
+*.log.gz
+
+# Testing y cobertura: no van a la imagen de produccion
+test
+.mocharc.json
+coverage
+.nyc_output
+
+# Documentacion y config de editores
+README.md
+*.md
+!src/**/*.md
+.vscode
+.idea
+.claude
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Temporales del sistema
+.DS_Store
+Thumbs.db
+scratchpad

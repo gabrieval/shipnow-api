@@ -1,3 +1,6 @@
+# DISPONIBILIDAD: todo este modulo queda deshabilitado en produccion por defecto
+# (responde 404). Se enciende con ENABLE_INTERNAL_ENDPOINTS=true.
+
 paths:
   /mocks/users:
     get:

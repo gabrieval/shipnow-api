@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# Levanta la API junto con su MongoDB, para poder probar el contenedor sin
+# instalar nada mas:  docker compose up --build
+# ---------------------------------------------------------------------------
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: shipnow-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # La API espera a que Mongo este listo de verdad, no solo arrancado.
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: shipnow-api
+    restart: unless-stopped
+    # Las variables se toman de un archivo externo: no quedan dentro de la imagen.
+    env_file:
+      - .env.docker
+    environment:
+      # El host de Mongo es el nombre del servicio dentro de la red de Compose.
+      MONGODB_URI: mongodb://mongo:27017/shipnow
+      # El puerto INTERNO se fija aca a proposito. Compose interpola `${...}` desde
+      # el shell o un `.env`, NO desde `env_file`: si se dejara `${PORT}` en el
+      # mapeo, cambiar PORT en .env.docker movia el puerto del proceso pero no el
+      # publicado, y la API quedaba inalcanzable desde el host.
+      PORT: 8080
+    ports:
+      # Solo el puerto del HOST es configurable, con HOST_PORT (por defecto 8080).
+      - '${HOST_PORT:-8080}:8080'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      # Logs y archivos subidos sobreviven a que se recree el contenedor.
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+
+volumes:
+  mongo-data:

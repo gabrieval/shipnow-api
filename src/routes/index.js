@@ -10,19 +10,22 @@ const mockRoutes = require('./mock.routes');
 const docsRoutes = require('./docs.routes');
 const healthController = require('../controllers/health.controller');
 const loggerController = require('../controllers/logger.controller');
+const internalOnly = require('../middlewares/internal.middleware');
+const { config } = require('../config');
 
 const router = Router();
 
 // La documentacion se monta primero: es la puerta de entrada al resto de la API.
-router.use('/', docsRoutes);
+// Se puede apagar con ENABLE_DOCS=false si el despliegue es privado.
+if (config.enableDocs) router.use('/', docsRoutes);
 
 router.get('/health', healthController.check);
-router.get('/logger-test', loggerController.test);
+router.get('/logger-test', internalOnly, loggerController.test);
 
 router.use('/products', productRoutes);
 router.use('/users', userRoutes);
 router.use('/orders', orderRoutes);
 router.use('/deliveries', deliveryRoutes);
-router.use('/mocks', mockRoutes);
+router.use('/mocks', internalOnly, mockRoutes);
 
 module.exports = router;
