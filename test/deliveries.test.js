@@ -79,6 +79,35 @@ describe('Deliveries - /api/deliveries', () => {
     });
   });
 
+  describe('GET /api/deliveries/tracking/:code', () => {
+    it('encuentra la entrega por su codigo de seguimiento', async () => {
+      const entrega = await unaEntregaSinRepartidor();
+
+      const payload = expectSuccess(await request.get(`/api/deliveries/tracking/${entrega.trackingCode}`));
+
+      expectDeliveryShape(payload);
+      expect(payload._id).to.equal(entrega._id);
+      expect(payload.trackingCode).to.equal(entrega.trackingCode);
+      expect(payload.order, 'el pedido tiene que venir resuelto').to.be.an('object');
+    });
+
+    it('no distingue mayusculas de minusculas', async () => {
+      const entrega = await unaEntregaSinRepartidor();
+
+      const payload = expectSuccess(
+        await request.get(`/api/deliveries/tracking/${entrega.trackingCode.toLowerCase()}`)
+      );
+
+      expect(payload.trackingCode).to.equal(entrega.trackingCode);
+    });
+
+    it('devuelve 404 ante un codigo inexistente', async () => {
+      const res = await request.get('/api/deliveries/tracking/TRK-NO-EXISTE');
+
+      expectError(res, 404, 'DELIVERY_NOT_FOUND');
+    });
+  });
+
   describe('PATCH /api/deliveries/:did/courier', () => {
     it('asigna un repartidor y deja la entrega en estado assigned', async () => {
       const entrega = await unaEntregaSinRepartidor();

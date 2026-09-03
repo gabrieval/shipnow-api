@@ -72,6 +72,60 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /deliveries/tracking/{code}:
+    get:
+      tags: [Deliveries]
+      summary: Sigue una entrega por su codigo de seguimiento
+      description: >
+        Consulta publica de seguimiento. El cliente conoce su codigo de tracking, no el id
+        interno de la entrega, asi que esta es la via natural para preguntar "donde esta mi
+        pedido".
+
+
+        Devuelve exactamente lo mismo que `GET /deliveries/{did}`: el estado, la fecha
+        estimada, el pedido y el repartidor asignado si lo hay.
+      parameters:
+        - in: path
+          name: code
+          required: true
+          description: Codigo de seguimiento. No distingue mayusculas de minusculas.
+          schema: { type: string, example: TRK-0001-9F3A2B }
+      responses:
+        '200':
+          description: Entrega encontrada.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      payload:
+                        $ref: '#/components/schemas/Delivery'
+        '400':
+          description: No se envio el codigo (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No existe ninguna entrega con ese codigo (`DELIVERY_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error:
+                  code: DELIVERY_NOT_FOUND
+                  message: La entrega solicitada no existe
+                  details:
+                    id: TRK-INEXISTENTE
+                timestamp: '2026-08-09T11:15:13.713Z'
+                path: GET /api/deliveries/tracking/TRK-INEXISTENTE
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /deliveries/{did}:
     get:
       tags: [Deliveries]
