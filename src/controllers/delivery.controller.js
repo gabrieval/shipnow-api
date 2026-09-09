@@ -11,6 +11,7 @@ class DeliveryController {
     this.getAll = this.getAll.bind(this);
     this.uploadReceipt = this.uploadReceipt.bind(this);
     this.getById = this.getById.bind(this);
+    this.getByTrackingCode = this.getByTrackingCode.bind(this);
     this.updateStatus = this.updateStatus.bind(this);
     this.assignCourier = this.assignCourier.bind(this);
   }
@@ -34,6 +35,14 @@ class DeliveryController {
   async getById(req, res, next) {
     try {
       return success(res, await this.service.getById(req.params.did));
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async getByTrackingCode(req, res, next) {
+    try {
+      return success(res, await this.service.getByTrackingCode(req.params.code));
     } catch (error) {
       return next(error);
     }

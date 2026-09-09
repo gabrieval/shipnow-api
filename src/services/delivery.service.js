@@ -102,6 +102,21 @@ class DeliveryService {
   }
 
   /**
+   * Seguimiento publico de una entrega por su codigo de tracking.
+   * No expone nada que no devuelva ya `GET /deliveries/:did`.
+   */
+  async getByTrackingCode(code) {
+    if (code === undefined || String(code).trim() === '') {
+      throw new ValidationError([{ field: 'code', message: 'Es obligatorio' }]);
+    }
+
+    const delivery = await this.repository.getByTrackingCode(code);
+    if (!delivery) throw new DeliveryNotFoundError(code);
+
+    return delivery;
+  }
+
+  /**
    * Cambia el estado de la entrega.
    * Regla: no se puede pasar a un estado que exige repartidor si la entrega no
    * tiene uno asignado.

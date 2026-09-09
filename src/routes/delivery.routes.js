@@ -8,6 +8,7 @@ const { uploadDeliveryReceipt } = require('../middlewares/upload.middleware');
 const router = Router();
 
 router.get('/', deliveryController.getAll);
+router.get('/tracking/:code', deliveryController.getByTrackingCode);
 router.get('/:did', deliveryController.getById);
 router.patch('/:did/status', deliveryController.updateStatus);
 router.patch('/:did/courier', deliveryController.assignCourier);

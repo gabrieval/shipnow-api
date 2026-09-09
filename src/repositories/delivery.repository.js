@@ -76,6 +76,18 @@ class DeliveryRepository {
       .lean();
   }
 
+  /**
+   * Busca por codigo de seguimiento. Es la via publica de consulta: el cliente
+   * conoce su tracking, no el id interno de la entrega.
+   */
+  async getByTrackingCode(code) {
+    return this.model
+      .findOne(this.#withBaseFilter({ trackingCode: String(code).trim().toUpperCase() }), PUBLIC_PROJECTION)
+      .populate(POPULATE_ORDER)
+      .populate(POPULATE_COURIER)
+      .lean();
+  }
+
   async countBy(filter = {}) {
     return this.model.countDocuments(this.#withBaseFilter(filter));
   }

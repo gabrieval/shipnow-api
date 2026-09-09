@@ -10,7 +10,7 @@ un diccionario centralizado de constantes del dominio, un módulo de mocking que
 usuarios, repartidores, pedidos y entregas de prueba, una capa común de errores que hace
 que toda la API falle siempre de la misma forma, y un sistema de logging con Winston que deja
 registro de lo que pasa adentro del servidor, documentada con Swagger/OpenAPI y cubierta por
-una suite de **178 tests funcionales** con Mocha, Chai y Supertest, carga de documentos y
+una suite de **181 tests funcionales** con Mocha, Chai y Supertest, carga de documentos y
 comprobantes con Multer, y la API contenerizada con Docker.
 
 - **Módulo 1** — arquitectura por capas y configuración de entorno.
@@ -21,6 +21,74 @@ comprobantes con Multer, y la API contenerizada con Docker.
 - **Módulo 6** — testing funcional con Mocha, Chai y Supertest, con entorno de testing aislado.
 - **Módulo 7** — carga de archivos con Multer: documentos de usuario y comprobantes de pedidos y entregas.
 - **Módulo 8** — performance, configuración por entorno, health check y Docker.
+
+---
+
+## Descripción del proyecto
+
+**ShipNow** es una API de logística. Modela el circuito completo de un envío:
+
+1. Un **catálogo de productos** con control de stock.
+2. **Usuarios** con roles: clientes, administradores y repartidores (`courier`).
+3. **Pedidos**: un usuario compra productos, se descuenta el stock y se calcula el total con
+   el precio vigente.
+4. **Entregas**: cada pedido genera una entrega, con su código de seguimiento, su estado y su
+   repartidor asignado.
+5. **Documentos y comprobantes**: los usuarios adjuntan documentación (DNI, licencia) y las
+   operaciones acumulan comprobantes de pago y de entrega.
+
+> **Sobre el vocabulario.** Lo que la consigna llama *envío* está modelado acá con dos
+> entidades separadas: **`Order`** (el pedido: qué compró el cliente y cuánto pagó) y
+> **`Delivery`** (la entrega: dónde está el paquete y quién lo lleva). Se separan porque
+> tienen ciclos de vida distintos — un pedido puede cancelarse antes de existir una entrega, y
+> una entrega puede fallar y reintentarse sin que el pedido cambie.
+
+El proyecto no busca cubrir todos los casos de un sistema de logística real, sino mostrar
+**criterio profesional**: cómo se organiza, cómo falla, cómo se documenta, cómo se prueba y
+cómo se ejecuta.
+
+## Tecnologías
+
+| Área | Herramienta |
+| --- | --- |
+| Runtime | Node.js 22 |
+| Framework HTTP | Express 4 |
+| Base de datos | MongoDB + Mongoose 8 |
+| Documentación | Swagger / OpenAPI 3.0 (`swagger-jsdoc` + `swagger-ui-express`) |
+| Logging | Winston + `winston-daily-rotate-file` |
+| Testing | Mocha + Chai + Supertest + `mongodb-memory-server` |
+| Datos de prueba | `@faker-js/faker` |
+| Carga de archivos | Multer 2 |
+| Contraseñas | bcrypt |
+| Configuración | dotenv, validada al arranque |
+| Contenedores | Docker + Docker Compose |
+
+## Arquitectura elegida
+
+**Arquitectura por capas**, con una regla que atraviesa todo el proyecto:
+
+```
+Router  →  Controller  →  Service  →  Repository  →  Model (Mongoose)
+```
+
+| Capa | Responsabilidad | Lo que NO hace |
+| --- | --- | --- |
+| **Router** | Conecta un path con un método del controller | No tiene lógica ni consultas |
+| **Controller** | Lee `req`, llama al service, elige el status code | No conoce Mongoose ni la base |
+| **Service** | Reglas de negocio: permisos, cálculos, estados, validaciones | No conoce `req`/`res` ni Mongoose |
+| **Repository** | Único que habla con Mongoose: filtros, proyecciones, paginación | No decide reglas de negocio |
+| **Model** | Estructura del documento y su integridad | No tiene lógica de aplicación |
+
+Alrededor de esas cinco capas hay cuatro transversales: **`config`** (entorno validado, logger,
+Swagger, Multer), **`constants`** (valores del dominio congelados), **`errors`** (diccionario y
+errores personalizados) y **`mocks`** (generadores puros de datos de prueba).
+
+El criterio que valida si la separación está bien hecha: *si el proyecto migrara de MongoDB a
+PostgreSQL, habría que reescribir los repositories y **ni una línea** de services, controllers
+o routers.*
+
+Está verificado automáticamente: hay tests y una auditoría que comprueban que ningún router ni
+controller importe Mongoose, y que ningún service conozca `req`/`res`.
 
 ---
 
@@ -79,7 +147,8 @@ Opcional — cargar datos de prueba (2 usuarios y 4 productos):
 npm run seed
 ```
 
-Correr los tests (no hace falta tener MongoDB: levanta uno en memoria):
+Correr los tests. **No hace falta ningún paso previo**: `npm install` deja `.env.test` creado
+y la suite levanta su propio MongoDB en memoria.
 
 ```bash
 npm test
@@ -513,6 +582,20 @@ Las variables se pasan **en tiempo de ejecución**, nunca dentro de la imagen.
 - **`HEALTHCHECK`**: consulta `/api/health`, así el orquestador sabe si la API está sana y no
   solo si el proceso vive.
 
+### Auditoría de dependencias
+
+`npm audit` a secas analiza el árbol **con** las dependencias de desarrollo, que no es el que
+termina dentro de la imagen. Para auditar exactamente lo que se despliega:
+
+```bash
+npm run audit:prod
+```
+
+No es un detalle teórico: al preparar esta entrega, el árbol completo daba limpio mientras que
+el de producción tenía una vulnerabilidad *high* en `fast-uri` y tres *moderate* en `qs`. Ambos
+árboles están hoy en **0 vulnerabilidades**; `qs` se fija con un `override` porque Express 4 lo
+declara en un rango ya vulnerable.
+
 ### Qué NO va al repositorio ni a la imagen
 
 `.gitignore` (repositorio) y `.dockerignore` (imagen) cubren:
@@ -713,7 +796,7 @@ intento de subir un tipo no permitido (`warning`), el descarte de un archivo hu�
 
 ## Testing
 
-La suite son **178 tests funcionales** que golpean la API por HTTP, de punta a punta:
+La suite son **181 tests funcionales** que golpean la API por HTTP, de punta a punta:
 router → controller → service → repository → MongoDB.
 
 ### Herramientas
@@ -774,17 +857,23 @@ NODE_ENV=test   ->  .env.test
 cualquier otro  ->  .env
 ```
 
-Para prepararlo:
+**No hay que prepararlo a mano**: un script `postinstall`
+([`src/scripts/setup-test-env.js`](src/scripts/setup-test-env.js)) copia
+`.env.test.example` como `.env.test` durante `npm install`, así que después de clonar alcanza
+con `npm install && npm test`.
 
-```bash
-cp .env.test.example .env.test
-```
+El script nunca pisa un `.env.test` que ya exista, y si no encuentra el ejemplo —como dentro
+del build de Docker, donde solo se copian los manifiestos— no hace nada y termina bien.
 
-En Windows:
+Si hiciera falta rehacerlo:
 
 ```bash
 copy .env.test.example .env.test
 ```
+
+> **Por qué solo el de testing.** El `.env` de desarrollo **no** se copia automáticamente: ahí
+> hay que elegir la URI de la base a mano, y crearlo en silencio escondería el arranque
+> fail-fast que valida las variables críticas.
 
 | Variable | Valor sugerido | Nota |
 | --- | --- | --- |
@@ -803,7 +892,7 @@ copy .env.test.example .env.test
 | `users.test.js` | 26 | Listado, registro, login, consulta por id, cambio de rol y baja |
 | `products.test.js` | 19 | Catálogo, disponibles, alta, detalle, descuento de stock, actualización y baja |
 | `orders.test.js` | 28 | Creación, listado, consulta por id y transiciones de estado |
-| `deliveries.test.js` | 14 | Listado, detalle, asignación de repartidor y cambio de estado |
+| `deliveries.test.js` | 17 | Listado, detalle, tracking, asignación de repartidor y estados |
 | `mocks.test.js` | 28 | Generación sin persistir, carga en MongoDB, cantidades inválidas y limpieza |
 | `production.test.js` | 27 | Health check, límites de listados, endpoints internos, entorno y Docker |
 | `uploads.test.js` | 21 | Documentos de usuario, comprobantes, validaciones y limpieza de huérfanos |
@@ -895,7 +984,7 @@ Los endpoints están agrupados por tags, uno por módulo:
 | **Mocks** | 9 | Generación de datos simulados y carga controlada en MongoDB |
 | **Logger** | 2 | Endpoint de prueba del logger y estado de la API |
 
-Son **26 rutas / 32 operaciones**, con método, descripción, parámetros de ruta y query, body
+Son **30 rutas / 37 operaciones**, con método, descripción, parámetros de ruta y query, body
 esperado, respuesta exitosa y todas las respuestas de error que la API realmente devuelve.
 
 ### Schemas reutilizables
@@ -1003,6 +1092,12 @@ Se apoya en `NODE_ENV`, la variable validada en el Módulo 1:
 | `production` | `info` — sin `debug` ni `http`, para no llenar el disco de ruido | sí |
 | `test` | consola silenciada | **no** se escribe nada a disco |
 
+> **Por qué la consola sigue activa en producción.** Dentro de un contenedor, `stdout` **es**
+> el canal de logs: es lo que lee `docker logs` y lo que recogen los agregadores. Silenciarla
+> dejaría al contenedor mudo. Lo que sí cambia es el nivel: en producción se emite desde `info`,
+> sin `debug` ni `http`. Si un despliegue necesitara otro nivel, se ajusta con `LOG_LEVEL` sin
+> tocar código.
+
 ### Dónde se guardan los logs
 
 En la carpeta [`logs/`](logs/), con rotación diaria:
@@ -1011,6 +1106,9 @@ En la carpeta [`logs/`](logs/), con rotación diaria:
 | --- | --- | --- |
 | `error-YYYY-MM-DD.log` | **solo** `error` y `fatal` | 5 MB por archivo, 14 días de historial |
 | `combined-YYYY-MM-DD.log` | desde `info` hacia arriba | 10 MB por archivo, 7 días de historial |
+
+Son el `error.log` y el `combined.log` de siempre, con la fecha en el nombre porque **rotan a
+diario**: sin eso, un solo archivo crecería sin límite.
 
 Los archivos rotados se comprimen en `.gz`. Cuando se supera el límite de días, los más viejos
 se borran solos: el historial no crece sin control.
@@ -1366,6 +1464,7 @@ terminales.
 | ------ | -------------------------- | ------- | ------------------------------------------------- |
 | GET    | `/deliveries`              | público | Listado + cuántas están sin repartidor            |
 | GET    | `/deliveries/:did`         | público | Detalle, con pedido y repartidor resueltos        |
+| GET    | `/deliveries/tracking/:code` | público | Seguimiento por código de tracking                |
 | PATCH  | `/deliveries/:did/status`  | ADMIN   | Cambia el estado                                  |
 | PATCH  | `/deliveries/:did/courier` | ADMIN   | Asigna un repartidor (usuario con rol `courier`)  |
 | POST   | `/deliveries/:did/receipt` | público | Adjunta un comprobante de entrega                 |
